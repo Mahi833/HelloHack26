@@ -12,19 +12,29 @@ export default function AppTabs() {
       backgroundColor={colors.background}
       indicatorColor={colors.backgroundElement}
       labelStyle={{ selected: { color: colors.text } }}>
+      <NativeTabs.Trigger name="quick-add">
+        <NativeTabs.Trigger.Label>Quick Add</NativeTabs.Trigger.Label>
+        <NativeTabs.Trigger.Icon
+          sf={{ default: 'plus.circle', selected: 'plus.circle.fill' }}
+          md={{ default: 'add_circle', selected: 'add_circle' }}
+        />
+      </NativeTabs.Trigger>
+
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>Home</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
           src={require('@/assets/images/tabIcons/home.png')}
           renderingMode="template"
+          sf={{ default: 'house', selected: 'house.fill' }}
+          md={{ default: 'home', selected: 'home' }}
         />
       </NativeTabs.Trigger>
 
-      <NativeTabs.Trigger name="explore">
-        <NativeTabs.Trigger.Label>Explore</NativeTabs.Trigger.Label>
+      <NativeTabs.Trigger name="history">
+        <NativeTabs.Trigger.Label>History</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
-          src={require('@/assets/images/tabIcons/explore.png')}
-          renderingMode="template"
+          sf={{ default: 'chart.bar', selected: 'chart.bar.fill' }}
+          md={{ default: 'bar_chart', selected: 'bar_chart' }}
         />
       </NativeTabs.Trigger>
     </NativeTabs>

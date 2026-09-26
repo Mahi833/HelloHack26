@@ -1,98 +1,254 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useState } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
+import { useHydrationDevState } from '@/contexts/hydration-dev-state';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+export default function HomeScreen() {
+  const [devPanelOpen, setDevPanelOpen] = useState(false);
+  const {
+    waterDrank,
+    setWaterDrank,
+    dailyGoal,
+    setDailyGoal,
+    minutesSinceDrink,
+    setMinutesSinceDrink,
+    isICupConnected,
+    setIsICupConnected,
+    icupBattery,
+    setICupBattery,
+  } = useHydrationDevState();
+  const progress = dailyGoal > 0 ? Math.min(waterDrank / dailyGoal, 1) : 0;
+  const remaining = Math.max(dailyGoal - waterDrank, 0);
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
-    return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
-    );
-  }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <LastDrinkPlaceholder minutesSinceDrink={minutesSinceDrink} />
+
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryTop}>
+            <View>
+              <Text style={styles.cardTitle}>TODAY&apos;S PROGRESS</Text>
+            </View>
+          </View>
+
+          <View style={styles.fractionRow}>
+            <Text style={styles.drunk}>{waterDrank.toLocaleString()}</Text>
+            <Text style={styles.slash}>/</Text>
+            <Text style={styles.goal}>{dailyGoal.toLocaleString()}</Text>
+            <Text style={styles.unit}>ml</Text>
+          </View>
+          <Text style={styles.caption}>drank <Text style={styles.captionDot}>·</Text> daily goal</Text>
+
+          <View style={styles.progressTrack} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
+            <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+          </View>
+          <View style={styles.progressLabels}>
+            <Text style={styles.progressPercent}>{Math.round(progress * 100)}% of your goal</Text>
+            <Text style={styles.remaining}>{remaining === 0 ? 'Goal reached!' : `${remaining.toLocaleString()} ml to go`}</Text>
+          </View>
+        </View>
+
+        <View style={styles.connectionRow}>
+          <View
+            style={[styles.bluetoothBubble, isICupConnected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
+            accessibilityRole="text"
+            accessibilityLabel={`iCup Bluetooth is ${isICupConnected ? 'connected' : 'not connected'}`}>
+            <Image
+              source={require('@/assets/images/icup-bluetooth-badge.png')}
+              resizeMode="contain"
+              style={styles.bluetoothImage}
+              accessibilityLabel="Bluetooth"
+            />
+            <View style={styles.connectionCopy}>
+              <Text style={styles.connectionTitle}>Bluetooth</Text>
+              <View style={styles.connectionStateLine}>
+                <View style={[styles.statusDot, isICupConnected ? styles.connectedDot : styles.disconnectedDot]} />
+                <Text style={[styles.connectionStatusText, isICupConnected && styles.connectedStatusText]}>
+                  {isICupConnected ? 'Connected' : 'Not connected'}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={`iCup battery ${icupBattery} percent`}>
+            <View style={styles.batteryIcon}>
+              <View style={styles.batteryCap} />
+              <View style={styles.batteryOutline}>
+                <View style={[styles.batteryFill, { width: `${icupBattery}%` }, icupBattery <= 20 && styles.batteryFillLow]} />
+              </View>
+            </View>
+            <View>
+              <Text style={styles.batteryLabel}>Battery</Text>
+              <Text style={styles.batteryValue}>{icupBattery}%</Text>
+            </View>
+          </View>
+        </View>
+
+        {__DEV__ && (
+          <View style={styles.devPanel}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: devPanelOpen }}
+              onPress={() => setDevPanelOpen((open) => !open)}
+              style={styles.devPanelHeader}>
+              <Text style={styles.devBadge}>DEV</Text>
+              <Text style={styles.devPanelTitle}>Developer controls</Text>
+              <Text style={styles.devChevron}>{devPanelOpen ? '−' : '+'}</Text>
+            </Pressable>
+            {devPanelOpen && (
+              <View style={styles.devPanelContent}>
+                <DevControlRow
+                  label="Time since last drink"
+                  value={minutesSinceDrink}
+                  unit="min"
+                  onDecrease={() => setMinutesSinceDrink((value) => Math.max(0, value - 5))}
+                  onIncrease={() => setMinutesSinceDrink((value) => value + 5)}
+                />
+                <DevControlRow
+                  label="Water drank today"
+                  value={waterDrank}
+                  unit="ml"
+                  onDecrease={() => setWaterDrank((value) => Math.max(0, value - 250))}
+                  onIncrease={() => setWaterDrank((value) => value + 250)}
+                />
+                <DevControlRow
+                  label="Daily water goal"
+                  value={dailyGoal}
+                  unit="ml"
+                  onDecrease={() => setDailyGoal((value) => Math.max(250, value - 250))}
+                  onIncrease={() => setDailyGoal((value) => value + 250)}
+                />
+                <DevControlRow
+                  label="iCup battery"
+                  value={icupBattery}
+                  unit="%"
+                  onDecrease={() => setICupBattery((value) => Math.max(0, value - 10))}
+                  onIncrease={() => setICupBattery((value) => Math.min(100, value + 10))}
+                />
+                <View style={styles.devBluetoothRow}>
+                  <Text style={styles.devLabel}>iCup Bluetooth</Text>
+                  <Pressable
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: isICupConnected }}
+                    onPress={() => setIsICupConnected((connected) => !connected)}
+                    style={[styles.devToggle, isICupConnected && styles.devToggleOn]}>
+                    <Text style={styles.devToggleText}>{isICupConnected ? 'Connected' : 'Disconnected'}</Text>
+                  </Pressable>
+                </View>
+                <Pressable
+                  onPress={() => {
+                    setMinutesSinceDrink(32);
+                    setWaterDrank(1250);
+                    setDailyGoal(2000);
+                    setIsICupConnected(false);
+                    setICupBattery(82);
+                  }}
+                  style={styles.resetButton}>
+                  <Text style={styles.resetText}>Reset sample values</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
-export default function HomeScreen() {
+function DevControlRow({
+  label,
+  value,
+  unit,
+  onDecrease,
+  onIncrease,
+}: {
+  label: string;
+  value: number;
+  unit: string;
+  onDecrease: () => void;
+  onIncrease: () => void;
+}) {
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
-          />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
-
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+    <View style={styles.devRow}>
+      <Text style={styles.devLabel}>{label}</Text>
+      <View style={styles.devValueControls}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Decrease ${label}`} onPress={onDecrease} style={styles.devStepButton}>
+          <Text style={styles.devStepText}>−</Text>
+        </Pressable>
+        <Text style={styles.devValue}>{value.toLocaleString()} {unit}</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Increase ${label}`} onPress={onIncrease} style={styles.devStepButton}>
+          <Text style={styles.devStepText}>+</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    flexDirection: 'row',
-  },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
-  },
+  safeArea: { flex: 1, backgroundColor: '#F4FAFC' },
+  content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 38, maxWidth: 560, width: '100%', alignSelf: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 26 },
+  eyebrow: { color: '#7D9EAD', fontSize: 11, letterSpacing: 1.5, fontWeight: '700' },
+  greeting: { color: '#163D52', fontSize: 28, lineHeight: 34, fontWeight: '700', marginTop: 5, letterSpacing: -0.7 },
+  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#E2F3F8', alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#429DBD', fontSize: 22 },
+  summaryCard: { borderRadius: 28, backgroundColor: '#DDF3FA', padding: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#B9DEE9' },
+  summaryTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  cardEyebrow: { color: '#5793A8', fontSize: 10, letterSpacing: 1.5, fontWeight: '700' },
+  cardTitle: { color: '#163D52', fontSize: 17, fontWeight: '600', marginTop: 5 },
+  dropBadge: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#C6EAF5', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#9FD3E2' },
+  drop: { color: '#3188A8', fontSize: 16 },
+  fractionRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 27 },
+  drunk: { color: '#176C8C', fontSize: 52, lineHeight: 60, fontWeight: '700', letterSpacing: -2 },
+  slash: { color: '#7BB3C7', fontSize: 36, marginHorizontal: 9, fontWeight: '300' },
+  goal: { color: '#54859A', fontSize: 34, fontWeight: '500', letterSpacing: -1 },
+  unit: { color: '#6E9AAA', fontSize: 15, marginLeft: 7, fontWeight: '600' },
+  caption: { color: '#6795A6', fontSize: 12, marginTop: 2, marginBottom: 22 },
+  captionDot: { color: '#A0C8D5' },
+  progressTrack: { height: 10, borderRadius: 8, backgroundColor: '#C5E7F1', overflow: 'hidden', borderWidth: 1, borderColor: '#A9D6E3' },
+  progressFill: { height: '100%', borderRadius: 8, backgroundColor: '#45A9C9' },
+  progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 11 },
+  progressPercent: { color: '#327E98', fontSize: 12, fontWeight: '700' },
+  remaining: { color: '#6B96A6', fontSize: 12 },
+  connectionRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10, marginTop: 18 },
+  bluetoothBubble: { flex: 1, minWidth: 0, minHeight: 68, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, borderRadius: 19, borderWidth: 1 },
+  bluetoothBubbleConnected: { backgroundColor: '#DDF3E6', borderColor: '#A9D7B8' },
+  bluetoothBubbleDisconnected: { backgroundColor: '#FCE5E5', borderColor: '#E9B6B6' },
+  bluetoothImage: { width: 44, height: 44 },
+  connectionCopy: { marginLeft: 10, flex: 1 },
+  connectionTitle: { color: '#245267', fontSize: 13, fontWeight: '700' },
+  connectionStateLine: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
+  statusDot: { width: 7, height: 7, borderRadius: 4, marginRight: 6 },
+  disconnectedDot: { backgroundColor: '#A7B8BE' },
+  connectedDot: { backgroundColor: '#28A765' },
+  connectionStatusText: { color: '#8299A2', fontSize: 10, fontWeight: '600' },
+  connectedStatusText: { color: '#278452' },
+  batteryBubble: { width: 112, minHeight: 68, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 19, backgroundColor: '#E5F4F8', borderWidth: 1, borderColor: '#C5DFE7' },
+  batteryIcon: { width: 22, height: 13, flexDirection: 'row', alignItems: 'center' },
+  batteryOutline: { flex: 1, height: 12, padding: 2, justifyContent: 'center', borderRadius: 3, borderWidth: 1.5, borderColor: '#6D9EAD' },
+  batteryCap: { width: 3, height: 6, borderTopRightRadius: 2, borderBottomRightRadius: 2, backgroundColor: '#6D9EAD' },
+  batteryFill: { height: '100%', borderRadius: 1, backgroundColor: '#42A6C2' },
+  batteryFillLow: { backgroundColor: '#D89B47' },
+  batteryLabel: { color: '#7F9CA7', fontSize: 9, fontWeight: '600' },
+  batteryValue: { color: '#326277', fontSize: 13, fontWeight: '700', marginTop: 2 },
+  devPanel: { marginTop: 28, borderRadius: 18, backgroundColor: '#EAF1F4', overflow: 'hidden', borderWidth: 1, borderColor: '#C2D1D7' },
+  devPanelHeader: { minHeight: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
+  devBadge: { color: '#FFFFFF', backgroundColor: '#718D99', fontSize: 9, fontWeight: '800', letterSpacing: 0.8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6 },
+  devPanelTitle: { color: '#506E7A', fontSize: 12, fontWeight: '700', marginLeft: 9, flex: 1 },
+  devChevron: { color: '#718D99', fontSize: 19, fontWeight: '500', paddingHorizontal: 5 },
+  devPanelContent: { paddingHorizontal: 14, paddingBottom: 13 },
+  devRow: { minHeight: 49, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#DDE8EC' },
+  devLabel: { color: '#607E89', fontSize: 11, fontWeight: '600', flex: 1 },
+  devValueControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  devStepButton: { width: 29, height: 29, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#C1D3D9' },
+  devStepText: { color: '#397F97', fontSize: 17, lineHeight: 20, fontWeight: '600' },
+  devValue: { minWidth: 70, textAlign: 'center', color: '#365D6D', fontSize: 11, fontWeight: '700' },
+  devBluetoothRow: { minHeight: 49, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#DDE8EC' },
+  devToggle: { minWidth: 104, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: '#DCE4E7', borderWidth: 1, borderColor: '#B5C6CC' },
+  devToggleOn: { backgroundColor: '#CFEBD9', borderColor: '#A5D2B4' },
+  devToggleText: { color: '#56727C', fontSize: 10, fontWeight: '700' },
+  resetButton: { alignSelf: 'flex-start', paddingVertical: 8 },
+  resetText: { color: '#4A91A8', fontSize: 11, fontWeight: '700' },
 });
