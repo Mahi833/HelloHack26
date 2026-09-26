@@ -2,69 +2,81 @@ import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
-import { useHydrationDevState } from '@/contexts/hydration-dev-state';
+import { useClock, useHydrationStore } from '@/store/hydration-store';
+import { localDayKey } from '@/store/types';
 
 type Range = 'Past day' | 'Past week' | 'Past month' | 'Custom range';
-type RecordItem = { date: Date; amount: number };
+type ChartBar = { label: string; amount: number };
 
-const GOAL = 2000;
 const RANGES: Range[] = ['Past day', 'Past week', 'Past month', 'Custom range'];
-const today = new Date();
-const records: RecordItem[] = Array.from({ length: 45 }, (_, index) => {
-  const date = new Date(today);
-  date.setDate(today.getDate() - index);
-  // Seeded sample records make the history chart useful before real data storage is connected.
-  const amount = 1250 + ((index * 379 + 263) % 1250);
-  return { date, amount };
-});
-const formatDate = (date: Date, options: Intl.DateTimeFormatOptions) =>
-  new Intl.DateTimeFormat('en', options).format(date);
-const toDateInput = (date: Date) => {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
+const DAYS_BACK: Record<Exclude<Range, 'Custom range'>, number> = {
+  'Past day': 1,
+  'Past week': 6,
+  'Past month': 29,
 };
+const DAY_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const HOUR_BUCKET_COUNT = 8;
+const HOUR_BUCKET_MS = 3 * 60 * 60 * 1000;
+const CHART_BAR_LIMIT = 7;
+
+const startOfDay = (at: number) => {
+  const date = new Date(at);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+};
+const dayKeyToDate = (day: string) => {
+  const [year, month, date] = day.split('-').map(Number);
+  return new Date(year, month - 1, date);
+};
+const formatDay = (day: string, options: Intl.DateTimeFormatOptions) =>
+  new Intl.DateTimeFormat('en', options).format(dayKeyToDate(day));
+const formatHour = (hour: number) => `${hour % 12 === 0 ? 12 : hour % 12}${hour < 12 ? 'a' : 'p'}`;
+const isDayKey = (value: string) =>
+  DAY_KEY_PATTERN.test(value) && !Number.isNaN(dayKeyToDate(value).getTime());
 
 export default function HistoryScreen() {
+  const { ready, dailyGoalMl, lastDrinkAt, dayTotals, eventsSince } = useHydrationStore();
   const [range, setRange] = useState<Range>('Past week');
   const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
-  const [startText, setStartText] = useState(toDateInput(new Date(today.getTime() - 6 * 86400000)));
-  const [endText, setEndText] = useState(toDateInput(today));
-  const { waterDrank, minutesSinceDrink } = useHydrationDevState();
+  const [startText, setStartText] = useState(() => localDayKey(Date.now() - 6 * 86400000));
+  const [endText, setEndText] = useState(() => localDayKey(Date.now()));
+
+  const now = useClock();
+  const todayKey = localDayKey(now);
+  const minutesSinceDrink =
+    lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
 
   const visibleRecords = useMemo(() => {
-    const start = new Date(today);
-    start.setHours(0, 0, 0, 0);
-    if (range === 'Past day') start.setDate(start.getDate() - 1);
-    if (range === 'Past week') start.setDate(start.getDate() - 6);
-    if (range === 'Past month') start.setDate(start.getDate() - 29);
-    let filteredRecords = records.filter(({ date }) => date >= start);
     if (range === 'Custom range') {
-      const customStart = new Date(`${startText}T00:00:00`);
-      const customEnd = new Date(`${endText}T23:59:59`);
-      if (!Number.isNaN(customStart.getTime()) && !Number.isNaN(customEnd.getTime())) {
-        filteredRecords = records.filter(({ date }) => date >= customStart && date <= customEnd);
-      } else {
-        filteredRecords = [];
-      }
+      if (!isDayKey(startText) || !isDayKey(endText) || startText > endText) return [];
+      return dayTotals(startText, endText);
     }
-    return filteredRecords.map((record) => ({
-      ...record,
-      amount: toDateInput(record.date) === toDateInput(today) ? waterDrank : record.amount,
-    })).reverse();
-  }, [range, startText, endText, waterDrank]);
+    const start = startOfDay(now);
+    start.setDate(start.getDate() - DAYS_BACK[range]);
+    return dayTotals(localDayKey(start.getTime()), localDayKey(now));
+  }, [range, startText, endText, dayTotals, now]);
 
-  const chartRecords = range === 'Past day'
-    ? [
-        { label: '6a', amount: 200 }, { label: '9a', amount: 500 }, { label: '12p', amount: 800 },
-        { label: '3p', amount: 1150 }, { label: '6p', amount: 1450 }, { label: '9p', amount: 1700 },
-      ]
-    : visibleRecords.slice(-7).map(({ date, amount }) => ({ label: formatDate(date, { weekday: 'short' }), amount }));
+  const chartRecords = useMemo<ChartBar[]>(() => {
+    if (range !== 'Past day') {
+      return visibleRecords
+        .slice(-CHART_BAR_LIMIT)
+        .map(({ day, ml }) => ({ label: formatDay(day, { weekday: 'short' }), amount: ml }));
+    }
+    const dayStart = startOfDay(now).getTime();
+    const events = eventsSince(dayStart);
+    if (events.length === 0) return [];
+    return Array.from({ length: HOUR_BUCKET_COUNT }, (_, index) => {
+      const bucketEnd = dayStart + (index + 1) * HOUR_BUCKET_MS;
+      return {
+        label: formatHour(new Date(dayStart + index * HOUR_BUCKET_MS).getHours()),
+        amount: events.reduce((sum, event) => (event.at < bucketEnd ? sum + event.ml : sum), 0),
+      };
+    });
+  }, [range, visibleRecords, eventsSince, now]);
+
   const average = visibleRecords.length
-    ? Math.round(visibleRecords.reduce((sum, item) => sum + item.amount, 0) / visibleRecords.length)
+    ? Math.round(visibleRecords.reduce((sum, item) => sum + item.ml, 0) / visibleRecords.length)
     : 0;
-  const maxChartAmount = Math.max(GOAL, ...chartRecords.map((item) => item.amount));
+  const maxChartAmount = Math.max(dailyGoalMl, ...chartRecords.map((item) => item.amount));
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -94,7 +106,7 @@ export default function HistoryScreen() {
               <Text style={styles.dateLabel}>FROM</Text>
               <TextInput value={startText} onChangeText={setStartText} placeholder="YYYY-MM-DD" style={styles.dateInput} accessibilityLabel="Start date, YYYY-MM-DD" />
             </View>
-            <Text style={styles.dateSeparator}>—</Text>
+            <Text style={styles.dateSeparator}>–</Text>
             <View style={styles.dateField}>
               <Text style={styles.dateLabel}>TO</Text>
               <TextInput value={endText} onChangeText={setEndText} placeholder="YYYY-MM-DD" style={styles.dateInput} accessibilityLabel="End date, YYYY-MM-DD" />
@@ -108,22 +120,26 @@ export default function HistoryScreen() {
               <Text style={styles.cardEyebrow}>DAILY AVERAGE</Text>
               <Text style={styles.average}>{average.toLocaleString()} <Text style={styles.averageUnit}>ml</Text></Text>
             </View>
-            <View style={styles.goalTag}><View style={styles.goalDot} /><Text style={styles.goalLabel}>2,000 ml goal</Text></View>
+            <View style={styles.goalTag}><View style={styles.goalDot} /><Text style={styles.goalLabel}>{dailyGoalMl.toLocaleString()} ml goal</Text></View>
           </View>
 
           <View style={styles.chart}>
             <View style={styles.gridLine} />
             <View style={[styles.gridLine, styles.gridLineMiddle]} />
-            <View style={styles.barRow}>
-              {chartRecords.map((item, index) => (
-                <View key={`${item.label}-${index}`} style={styles.barColumn}>
-                  <View style={styles.barTrack}>
-                    <View style={[styles.bar, { height: `${Math.max(8, Math.min(item.amount / maxChartAmount, 1) * 100)}%` }, index === chartRecords.length - 1 && styles.barLatest]} />
+            {chartRecords.length === 0 ? (
+              <Text style={styles.chartEmpty}>{ready ? 'No water logged in this range yet.' : 'Loading your saved drinks…'}</Text>
+            ) : (
+              <View style={styles.barRow}>
+                {chartRecords.map((item, index) => (
+                  <View key={`${item.label}-${index}`} style={styles.barColumn}>
+                    <View style={styles.barTrack}>
+                      <View style={[styles.bar, { height: `${Math.max(8, Math.min(item.amount / maxChartAmount, 1) * 100)}%` }, index === chartRecords.length - 1 && styles.barLatest]} />
+                    </View>
+                    <Text style={styles.barLabel}>{item.label}</Text>
                   </View>
-                  <Text style={styles.barLabel}>{item.label}</Text>
-                </View>
-              ))}
-            </View>
+                ))}
+              </View>
+            )}
           </View>
           <View style={styles.chartFootnote}>
             <View style={styles.legend}><View style={styles.legendDot} /><Text style={styles.legendText}>Water intake</Text></View>
@@ -137,22 +153,21 @@ export default function HistoryScreen() {
         </View>
         <View style={styles.recordsCard}>
           {visibleRecords.length === 0 ? (
-            <Text style={styles.emptyState}>No records in this date range.</Text>
-          ) : visibleRecords.map(({ date, amount }, index) => (
-            <View key={toDateInput(date)} style={[styles.recordRow, index === visibleRecords.length - 1 && styles.lastRecordRow]}>
+            <Text style={styles.emptyState}>{ready ? 'No records in this date range.' : 'Loading your saved drinks…'}</Text>
+          ) : visibleRecords.map(({ day, ml }, index) => (
+            <View key={day} style={[styles.recordRow, index === visibleRecords.length - 1 && styles.lastRecordRow]}>
               <View style={styles.recordIcon}><Text style={styles.recordDrop}>●</Text></View>
               <View style={styles.recordDetails}>
-                <Text style={styles.recordDay}>{index === visibleRecords.length - 1 && toDateInput(date) === toDateInput(today) ? 'Today' : formatDate(date, { weekday: 'long' })}</Text>
-                <Text style={styles.recordDate}>{formatDate(date, { month: 'short', day: 'numeric' })}</Text>
+                <Text style={styles.recordDay}>{day === todayKey ? 'Today' : formatDay(day, { weekday: 'long' })}</Text>
+                <Text style={styles.recordDate}>{formatDay(day, { month: 'short', day: 'numeric' })}</Text>
               </View>
               <View style={styles.recordTotal}>
-                <Text style={styles.recordAmount}>{amount.toLocaleString()} ml</Text>
-                <Text style={styles.recordGoal}>{Math.round((amount / GOAL) * 100)}% of goal</Text>
+                <Text style={styles.recordAmount}>{ml.toLocaleString()} ml</Text>
+                <Text style={styles.recordGoal}>{dailyGoalMl > 0 ? Math.round((ml / dailyGoalMl) * 100) : 0}% of goal</Text>
               </View>
             </View>
           ))}
         </View>
-        <Text style={styles.sampleNote}>Sample history shown until intake tracking is connected to saved records.</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -189,6 +204,7 @@ const styles = StyleSheet.create({
   goalDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#9CCBD8', marginRight: 6 },
   goalLabel: { color: '#7495A1', fontSize: 10, fontWeight: '600' },
   chart: { height: 174, marginTop: 19, position: 'relative', justifyContent: 'flex-end' },
+  chartEmpty: { height: 150, paddingTop: 62, textAlign: 'center', color: '#91AAB4', fontSize: 13 },
   gridLine: { position: 'absolute', left: 0, right: 0, top: 24, height: 1, backgroundColor: '#EFF5F7' },
   gridLineMiddle: { top: 91 },
   barRow: { height: 150, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
@@ -217,5 +233,4 @@ const styles = StyleSheet.create({
   recordAmount: { color: '#326277', fontSize: 13, fontWeight: '700' },
   recordGoal: { color: '#91AAB4', fontSize: 10, marginTop: 4 },
   emptyState: { textAlign: 'center', color: '#91AAB4', paddingVertical: 25, fontSize: 13 },
-  sampleNote: { textAlign: 'center', color: '#A0B4BC', fontSize: 10, lineHeight: 15, marginTop: 14, paddingHorizontal: 12 },
 });

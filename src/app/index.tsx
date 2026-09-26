@@ -1,29 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
-import { useHydrationDevState } from '@/contexts/hydration-dev-state';
+import { useClock, useHydrationStore } from '@/store/hydration-store';
+import { createBleWeightSource, createSimulatedWeightSource, useIcup } from '@/ble/use-icup';
+
+const GOAL_STEP_ML = 250;
+const MIN_GOAL_ML = 250;
 
 export default function HomeScreen() {
   const [devPanelOpen, setDevPanelOpen] = useState(false);
+  const [simulatedCup, setSimulatedCup] = useState(false);
   const [sipRemindersEnabled, setSipRemindersEnabled] = useState(false);
   const [reminderBusy, setReminderBusy] = useState(false);
   const [reminderMessage, setReminderMessage] = useState('Get a gentle reminder every 2 minutes.');
-  const {
-    waterDrank,
-    setWaterDrank,
-    dailyGoal,
-    setDailyGoal,
-    minutesSinceDrink,
-    setMinutesSinceDrink,
-    isICupConnected,
-    setIsICupConnected,
-    icupBattery,
-    setICupBattery,
-  } = useHydrationDevState();
-  const progress = dailyGoal > 0 ? Math.min(waterDrank / dailyGoal, 1) : 0;
-  const remaining = Math.max(dailyGoal - waterDrank, 0);
+
+  const { ready, todayMl, dailyGoalMl, lastDrinkAt, addDrink, setDailyGoal } = useHydrationStore();
+  const now = useClock();
+  const minutesSinceDrink = lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
+
+  const weightSource = useMemo(
+    () => (simulatedCup ? createSimulatedWeightSource() : createBleWeightSource()),
+    [simulatedCup],
+  );
+  const icup = useIcup({ addDrink, source: weightSource });
+
+  const progress = dailyGoalMl > 0 ? Math.min(todayMl / dailyGoalMl, 1) : 0;
+  const remaining = Math.max(dailyGoalMl - todayMl, 0);
 
   useEffect(() => {
     let mounted = true;
@@ -74,7 +78,7 @@ export default function HomeScreen() {
           },
         });
         setSipRemindersEnabled(true);
-        setReminderMessage('You’ll get “Time for a sip!” every 2 minutes.');
+        setReminderMessage('You will get "Time for a sip!" every 2 minutes.');
       } else {
         const scheduled = await Notifications.getAllScheduledNotificationsAsync();
         await Promise.all(scheduled
@@ -91,6 +95,16 @@ export default function HomeScreen() {
     }
   };
 
+  const logDrink = (ml: number) => {
+    addDrink(ml, 'manual').catch((error: unknown) => console.warn('Could not save that drink', error));
+  };
+
+  const nudgeGoal = (delta: number) => {
+    setDailyGoal(Math.max(MIN_GOAL_ML, dailyGoalMl + delta)).catch((error: unknown) =>
+      console.warn('Could not save that goal', error),
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -104,9 +118,9 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.fractionRow}>
-            <Text style={styles.drunk}>{waterDrank.toLocaleString()}</Text>
+            <Text style={styles.drunk}>{todayMl.toLocaleString()}</Text>
             <Text style={styles.slash}>/</Text>
-            <Text style={styles.goal}>{dailyGoal.toLocaleString()}</Text>
+            <Text style={styles.goal}>{dailyGoalMl.toLocaleString()}</Text>
             <Text style={styles.unit}>ml</Text>
           </View>
           <Text style={styles.caption}>drank <Text style={styles.captionDot}>·</Text> daily goal</Text>
@@ -116,15 +130,17 @@ export default function HomeScreen() {
           </View>
           <View style={styles.progressLabels}>
             <Text style={styles.progressPercent}>{Math.round(progress * 100)}% of your goal</Text>
-            <Text style={styles.remaining}>{remaining === 0 ? 'Goal reached!' : `${remaining.toLocaleString()} ml to go`}</Text>
+            <Text style={styles.remaining}>
+              {!ready ? 'Loading your saved drinks' : remaining === 0 ? 'Goal reached!' : `${remaining.toLocaleString()} ml to go`}
+            </Text>
           </View>
         </View>
 
         <View style={styles.connectionRow}>
           <View
-            style={[styles.bluetoothBubble, isICupConnected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
+            style={[styles.bluetoothBubble, icup.connected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
             accessibilityRole="text"
-            accessibilityLabel={`iCup Bluetooth is ${isICupConnected ? 'connected' : 'not connected'}`}>
+            accessibilityLabel={`iCup Bluetooth is ${icup.connected ? 'connected' : 'not connected'}`}>
             <Image
               source={require('@/assets/images/icup-bluetooth-badge.png')}
               resizeMode="contain"
@@ -134,24 +150,20 @@ export default function HomeScreen() {
             <View style={styles.connectionCopy}>
               <Text style={styles.connectionTitle}>Bluetooth</Text>
               <View style={styles.connectionStateLine}>
-                <View style={[styles.statusDot, isICupConnected ? styles.connectedDot : styles.disconnectedDot]} />
-                <Text style={[styles.connectionStatusText, isICupConnected && styles.connectedStatusText]}>
-                  {isICupConnected ? 'Connected' : 'Not connected'}
+                <View style={[styles.statusDot, icup.connected ? styles.connectedDot : styles.disconnectedDot]} />
+                <Text style={[styles.connectionStatusText, icup.connected && styles.connectedStatusText]} numberOfLines={1}>
+                  {icup.connected
+                    ? simulatedCup ? 'Simulated cup' : 'Connected'
+                    : icup.error ? 'Bluetooth problem' : 'Not connected'}
                 </Text>
               </View>
             </View>
           </View>
 
-          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={`iCup battery ${icupBattery} percent`}>
-            <View style={styles.batteryIcon}>
-              <View style={styles.batteryCap} />
-              <View style={styles.batteryOutline}>
-                <View style={[styles.batteryFill, { width: `${icupBattery}%` }, icupBattery <= 20 && styles.batteryFillLow]} />
-              </View>
-            </View>
+          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={icup.weightG === null ? 'Cup weight unknown' : `Cup weight ${Math.round(icup.weightG)} grams`}>
             <View>
-              <Text style={styles.batteryLabel}>Battery</Text>
-              <Text style={styles.batteryValue}>{icupBattery}%</Text>
+              <Text style={styles.batteryLabel}>In the cup</Text>
+              <Text style={styles.batteryValue}>{icup.weightG === null ? '--' : `${Math.round(icup.weightG)} g`}</Text>
             </View>
           </View>
         </View>
@@ -169,7 +181,7 @@ export default function HomeScreen() {
               value={sipRemindersEnabled}
               onValueChange={setSipReminders}
               trackColor={{ false: '#C5D5DB', true: '#8AC7A1' }}
-              thumbColor={sipRemindersEnabled ? '#FFFFFF' : '#FFFFFF'}
+              thumbColor="#FFFFFF"
             />
           )}
         </View>
@@ -187,55 +199,40 @@ export default function HomeScreen() {
             </Pressable>
             {devPanelOpen && (
               <View style={styles.devPanelContent}>
+                <View style={styles.devBluetoothRow}>
+                  <Text style={styles.devLabel}>Simulated cup</Text>
+                  <Pressable
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: simulatedCup }}
+                    onPress={() => setSimulatedCup((value) => !value)}
+                    style={[styles.devToggle, simulatedCup && styles.devToggleOn]}>
+                    <Text style={styles.devToggleText}>{simulatedCup ? 'Driving sips' : 'Real cup'}</Text>
+                  </Pressable>
+                </View>
                 <DevControlRow
-                  label="Time since last drink"
-                  value={minutesSinceDrink}
-                  unit="min"
-                  onDecrease={() => setMinutesSinceDrink((value) => Math.max(0, value - 5))}
-                  onIncrease={() => setMinutesSinceDrink((value) => value + 5)}
-                />
-                <DevControlRow
-                  label="Water drank today"
-                  value={waterDrank}
-                  unit="ml"
-                  onDecrease={() => setWaterDrank((value) => Math.max(0, value - 250))}
-                  onIncrease={() => setWaterDrank((value) => value + 250)}
+                  label="Log a drink"
+                  value={todayMl}
+                  unit="ml today"
+                  onDecrease={() => logDrink(GOAL_STEP_ML)}
+                  onIncrease={() => logDrink(GOAL_STEP_ML)}
                 />
                 <DevControlRow
                   label="Daily water goal"
-                  value={dailyGoal}
+                  value={dailyGoalMl}
                   unit="ml"
-                  onDecrease={() => setDailyGoal((value) => Math.max(250, value - 250))}
-                  onIncrease={() => setDailyGoal((value) => value + 250)}
+                  onDecrease={() => nudgeGoal(-GOAL_STEP_ML)}
+                  onIncrease={() => nudgeGoal(GOAL_STEP_ML)}
                 />
-                <DevControlRow
-                  label="iCup battery"
-                  value={icupBattery}
-                  unit="%"
-                  onDecrease={() => setICupBattery((value) => Math.max(0, value - 10))}
-                  onIncrease={() => setICupBattery((value) => Math.min(100, value + 10))}
-                />
-                <View style={styles.devBluetoothRow}>
-                  <Text style={styles.devLabel}>iCup Bluetooth</Text>
-                  <Pressable
-                    accessibilityRole="switch"
-                    accessibilityState={{ checked: isICupConnected }}
-                    onPress={() => setIsICupConnected((connected) => !connected)}
-                    style={[styles.devToggle, isICupConnected && styles.devToggleOn]}>
-                    <Text style={styles.devToggleText}>{isICupConnected ? 'Connected' : 'Disconnected'}</Text>
-                  </Pressable>
+                <View style={styles.devRow}>
+                  <Text style={styles.devLabel}>Live weight</Text>
+                  <Text style={styles.devValue}>{icup.weightG === null ? 'no reading' : `${icup.weightG.toFixed(1)} g`}</Text>
                 </View>
-                <Pressable
-                  onPress={() => {
-                    setMinutesSinceDrink(32);
-                    setWaterDrank(1250);
-                    setDailyGoal(2000);
-                    setIsICupConnected(false);
-                    setICupBattery(82);
-                  }}
-                  style={styles.resetButton}>
-                  <Text style={styles.resetText}>Reset sample values</Text>
-                </Pressable>
+                {icup.error !== null && (
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Bluetooth error</Text>
+                    <Text style={styles.devValue}>{icup.error}</Text>
+                  </View>
+                )}
               </View>
             )}
           </View>
@@ -277,17 +274,9 @@ function DevControlRow({
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#F4FAFC' },
   content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 38, maxWidth: 560, width: '100%', alignSelf: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 26 },
-  eyebrow: { color: '#7D9EAD', fontSize: 11, letterSpacing: 1.5, fontWeight: '700' },
-  greeting: { color: '#163D52', fontSize: 28, lineHeight: 34, fontWeight: '700', marginTop: 5, letterSpacing: -0.7 },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#E2F3F8', alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#429DBD', fontSize: 22 },
   summaryCard: { borderRadius: 28, backgroundColor: '#DDF3FA', padding: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#B9DEE9' },
   summaryTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  cardEyebrow: { color: '#5793A8', fontSize: 10, letterSpacing: 1.5, fontWeight: '700' },
   cardTitle: { color: '#163D52', fontSize: 17, fontWeight: '600', marginTop: 5 },
-  dropBadge: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#C6EAF5', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#9FD3E2' },
-  drop: { color: '#3188A8', fontSize: 16 },
   fractionRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 27 },
   drunk: { color: '#176C8C', fontSize: 52, lineHeight: 60, fontWeight: '700', letterSpacing: -2 },
   slash: { color: '#7BB3C7', fontSize: 36, marginHorizontal: 9, fontWeight: '300' },
@@ -318,11 +307,6 @@ const styles = StyleSheet.create({
   connectionStatusText: { color: '#8299A2', fontSize: 10, fontWeight: '600' },
   connectedStatusText: { color: '#278452' },
   batteryBubble: { width: 112, minHeight: 68, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 19, backgroundColor: '#E5F4F8', borderWidth: 1, borderColor: '#C5DFE7' },
-  batteryIcon: { width: 22, height: 13, flexDirection: 'row', alignItems: 'center' },
-  batteryOutline: { flex: 1, height: 12, padding: 2, justifyContent: 'center', borderRadius: 3, borderWidth: 1.5, borderColor: '#6D9EAD' },
-  batteryCap: { width: 3, height: 6, borderTopRightRadius: 2, borderBottomRightRadius: 2, backgroundColor: '#6D9EAD' },
-  batteryFill: { height: '100%', borderRadius: 1, backgroundColor: '#42A6C2' },
-  batteryFillLow: { backgroundColor: '#D89B47' },
   batteryLabel: { color: '#7F9CA7', fontSize: 9, fontWeight: '600' },
   batteryValue: { color: '#326277', fontSize: 13, fontWeight: '700', marginTop: 2 },
   devPanel: { marginTop: 28, borderRadius: 18, backgroundColor: '#EAF1F4', overflow: 'hidden', borderWidth: 1, borderColor: '#C2D1D7' },
@@ -341,6 +325,4 @@ const styles = StyleSheet.create({
   devToggle: { minWidth: 104, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: '#DCE4E7', borderWidth: 1, borderColor: '#B5C6CC' },
   devToggleOn: { backgroundColor: '#CFEBD9', borderColor: '#A5D2B4' },
   devToggleText: { color: '#56727C', fontSize: 10, fontWeight: '700' },
-  resetButton: { alignSelf: 'flex-start', paddingVertical: 8 },
-  resetText: { color: '#4A91A8', fontSize: 11, fontWeight: '700' },
 });

@@ -2,7 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
-import { useHydrationDevState } from '@/contexts/hydration-dev-state';
+import { useClock, useHydrationStore } from '@/store/hydration-store';
 
 const SERVINGS = [
   { amount: 150, label: 'Small' },
@@ -11,7 +11,16 @@ const SERVINGS = [
 ];
 
 export default function QuickAddScreen() {
-  const { waterDrank, setWaterDrank, minutesSinceDrink, dailyGoal } = useHydrationDevState();
+  const { todayMl, dailyGoalMl, lastDrinkAt, addDrink } = useHydrationStore();
+  const now = useClock();
+  const minutesSinceDrink =
+    lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
+
+  const logServing = (amount: number) => {
+    addDrink(amount, 'manual').catch((error: unknown) =>
+      console.warn('Could not save that drink', error),
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -24,8 +33,8 @@ export default function QuickAddScreen() {
 
         <View style={styles.totalCard}>
           <Text style={styles.totalLabel}>TODAY&apos;S INTAKE</Text>
-          <Text style={styles.totalValue}>{waterDrank.toLocaleString()} <Text style={styles.totalUnit}>ml</Text></Text>
-          <Text style={styles.goalText}>Daily goal: {dailyGoal.toLocaleString()} ml</Text>
+          <Text style={styles.totalValue}>{todayMl.toLocaleString()} <Text style={styles.totalUnit}>ml</Text></Text>
+          <Text style={styles.goalText}>Daily goal: {dailyGoalMl.toLocaleString()} ml</Text>
         </View>
 
         <View style={styles.servings}>
@@ -34,7 +43,7 @@ export default function QuickAddScreen() {
               key={amount}
               accessibilityRole="button"
               accessibilityLabel={`Add ${amount} milliliters of water`}
-              onPress={() => setWaterDrank((current) => current + amount)}
+              onPress={() => logServing(amount)}
               style={({ pressed }) => [styles.serving, pressed && styles.pressed]}>
               <View style={[styles.glass, index === 1 && styles.glassSelected]}>
                 <View style={[styles.water, { height: `${35 + index * 18}%` }]} />

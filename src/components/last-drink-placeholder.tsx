@@ -1,10 +1,23 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-export function LastDrinkPlaceholder({ minutesSinceDrink }: { minutesSinceDrink: number }) {
+const describeElapsed = (minutes: number): string => {
+  if (minutes < 1) return 'You just drank water';
+  if (minutes < 60) {
+    return `It's been ${minutes} minute${minutes === 1 ? '' : 's'} since you last drank water`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (rest === 0) {
+    return `It's been ${hours} hour${hours === 1 ? '' : 's'} since you last drank water`;
+  }
+  return `It's been ${hours}h ${rest}m since you last drank water`;
+};
+
+export function LastDrinkPlaceholder({ minutesSinceDrink }: { minutesSinceDrink: number | null }) {
   return (
     <View style={styles.container}>
       <Text style={styles.message}>
-        It&apos;s been {minutesSinceDrink} minute{minutesSinceDrink === 1 ? '' : 's'} since you last drank water
+        {minutesSinceDrink === null ? 'No water logged yet. Take a sip to get started.' : describeElapsed(minutesSinceDrink)}
       </Text>
     </View>
   );

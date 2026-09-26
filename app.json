@@ -8,7 +8,8 @@
     "scheme": "hellohack26",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.alexliu.icup"
     },
     "android": {
       "adaptiveIcon": {
@@ -32,6 +33,21 @@
           "backgroundColor": "#208AEF",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      "expo-sqlite",
+      [
+        "@sfourdrinier/react-native-ble-plx",
+        {
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to your iCup so it can log what you drink."
+        }
+      ],
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "iCup reads your workouts and sleep so it can remind you to drink at the times that matter.",
+          "NSHealthUpdateUsageDescription": "iCup saves the water you drink to Apple Health.",
+          "background": false
         }
       ]
     ],
