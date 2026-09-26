@@ -2,6 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
+import { useLogDrink } from '@/hooks/use-log-drink';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
 
 const SERVINGS = [
@@ -11,13 +12,14 @@ const SERVINGS = [
 ];
 
 export default function QuickAddScreen() {
-  const { todayMl, dailyGoalMl, lastDrinkAt, addDrink } = useHydrationStore();
+  const { todayMl, dailyGoalMl, lastDrinkAt } = useHydrationStore();
+  const logDrink = useLogDrink();
   const now = useClock();
   const minutesSinceDrink =
     lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
 
   const logServing = (amount: number) => {
-    addDrink(amount, 'manual').catch((error: unknown) =>
+    logDrink(amount, 'manual').catch((error: unknown) =>
       console.warn('Could not save that drink', error),
     );
   };

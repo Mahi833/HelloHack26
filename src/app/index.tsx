@@ -5,6 +5,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
 import { createBleWeightSource, createSimulatedWeightSource, useIcup } from '@/ble/use-icup';
+import { useHealthReminders } from '@/health/use-health-reminders';
+import { useLogDrink } from '@/hooks/use-log-drink';
 
 const GOAL_STEP_ML = 250;
 const MIN_GOAL_ML = 250;
@@ -16,7 +18,8 @@ export default function HomeScreen() {
   const [reminderBusy, setReminderBusy] = useState(false);
   const [reminderMessage, setReminderMessage] = useState('Get a gentle reminder every 2 minutes.');
 
-  const { ready, todayMl, dailyGoalMl, lastDrinkAt, addDrink, setDailyGoal } = useHydrationStore();
+  const { ready, todayMl, dailyGoalMl, lastDrinkAt, setDailyGoal } = useHydrationStore();
+  const logDrink = useLogDrink();
   const now = useClock();
   const minutesSinceDrink = lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
 
@@ -24,7 +27,8 @@ export default function HomeScreen() {
     () => (simulatedCup ? createSimulatedWeightSource() : createBleWeightSource()),
     [simulatedCup],
   );
-  const icup = useIcup({ addDrink, source: weightSource });
+  const icup = useIcup({ addDrink: logDrink, source: weightSource });
+  const health = useHealthReminders({ lastDrinkAt, todayMl, addDrink: logDrink });
 
   const progress = dailyGoalMl > 0 ? Math.min(todayMl / dailyGoalMl, 1) : 0;
   const remaining = Math.max(dailyGoalMl - todayMl, 0);
@@ -95,8 +99,8 @@ export default function HomeScreen() {
     }
   };
 
-  const logDrink = (ml: number) => {
-    addDrink(ml, 'manual').catch((error: unknown) => console.warn('Could not save that drink', error));
+  const logManualDrink = (ml: number) => {
+    logDrink(ml, 'manual').catch((error: unknown) => console.warn('Could not save that drink', error));
   };
 
   const nudgeGoal = (delta: number) => {
@@ -213,8 +217,8 @@ export default function HomeScreen() {
                   label="Log a drink"
                   value={todayMl}
                   unit="ml today"
-                  onDecrease={() => logDrink(GOAL_STEP_ML)}
-                  onIncrease={() => logDrink(GOAL_STEP_ML)}
+                  onDecrease={() => logManualDrink(GOAL_STEP_ML)}
+                  onIncrease={() => logManualDrink(GOAL_STEP_ML)}
                 />
                 <DevControlRow
                   label="Daily water goal"
@@ -226,6 +230,14 @@ export default function HomeScreen() {
                 <View style={styles.devRow}>
                   <Text style={styles.devLabel}>Live weight</Text>
                   <Text style={styles.devValue}>{icup.weightG === null ? 'no reading' : `${icup.weightG.toFixed(1)} g`}</Text>
+                </View>
+                <View style={styles.devRow}>
+                  <Text style={styles.devLabel}>Apple Health</Text>
+                  <Text style={styles.devValue}>{health.healthAuthorized ? 'authorized' : 'not authorized'}</Text>
+                </View>
+                <View style={styles.devRow}>
+                  <Text style={styles.devLabel}>Last health nudge</Text>
+                  <Text style={styles.devValue}>{health.lastNudge === null ? 'none yet' : health.lastNudge.kind}</Text>
                 </View>
                 {icup.error !== null && (
                   <View style={styles.devRow}>
