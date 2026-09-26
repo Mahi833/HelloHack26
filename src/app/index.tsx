@@ -1,11 +1,15 @@
-import { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
 import { useHydrationDevState } from '@/contexts/hydration-dev-state';
 
 export default function HomeScreen() {
   const [devPanelOpen, setDevPanelOpen] = useState(false);
+  const [sipRemindersEnabled, setSipRemindersEnabled] = useState(false);
+  const [reminderBusy, setReminderBusy] = useState(false);
+  const [reminderMessage, setReminderMessage] = useState('Get a gentle reminder every 2 minutes.');
   const {
     waterDrank,
     setWaterDrank,
@@ -20,6 +24,72 @@ export default function HomeScreen() {
   } = useHydrationDevState();
   const progress = dailyGoal > 0 ? Math.min(waterDrank / dailyGoal, 1) : 0;
   const remaining = Math.max(dailyGoal - waterDrank, 0);
+
+  useEffect(() => {
+    let mounted = true;
+    Notifications.getAllScheduledNotificationsAsync()
+      .then((scheduled) => {
+        const enabled = scheduled.some((item) => item.content.data?.kind === 'sip-reminder');
+        if (mounted) setSipRemindersEnabled(enabled);
+      })
+      .catch(() => {
+        if (mounted) setReminderMessage('Notifications are unavailable on this device.');
+      });
+    return () => { mounted = false; };
+  }, []);
+
+  const setSipReminders = async (enabled: boolean) => {
+    if (reminderBusy) return;
+    setReminderBusy(true);
+    try {
+      if (enabled) {
+        if (Platform.OS === 'android') {
+          await Notifications.setNotificationChannelAsync('sip-reminders', {
+            name: 'Sip reminders',
+            importance: Notifications.AndroidImportance.DEFAULT,
+          });
+        }
+        let permission = await Notifications.getPermissionsAsync();
+        if (!permission.granted) permission = await Notifications.requestPermissionsAsync();
+        if (!permission.granted) {
+          setSipRemindersEnabled(false);
+          setReminderMessage('Allow notifications in Settings to turn on sip reminders.');
+          return;
+        }
+        const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+        await Promise.all(scheduled
+          .filter((item) => item.content.data?.kind === 'sip-reminder')
+          .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+        await Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Time for a sip!',
+            body: 'Take a moment to drink some water.',
+            data: { kind: 'sip-reminder' },
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+            seconds: 120,
+            repeats: true,
+            ...(Platform.OS === 'android' ? { channelId: 'sip-reminders' } : {}),
+          },
+        });
+        setSipRemindersEnabled(true);
+        setReminderMessage('You’ll get “Time for a sip!” every 2 minutes.');
+      } else {
+        const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+        await Promise.all(scheduled
+          .filter((item) => item.content.data?.kind === 'sip-reminder')
+          .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+        setSipRemindersEnabled(false);
+        setReminderMessage('Sip reminders are off.');
+      }
+    } catch {
+      setReminderMessage('Could not update reminders. Please try again.');
+      setSipRemindersEnabled(false);
+    } finally {
+      setReminderBusy(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -84,6 +154,24 @@ export default function HomeScreen() {
               <Text style={styles.batteryValue}>{icupBattery}%</Text>
             </View>
           </View>
+        </View>
+
+        <View style={styles.reminderCard}>
+          <View style={styles.reminderCopy}>
+            <Text style={styles.reminderTitle}>Sip reminders</Text>
+            <Text style={styles.reminderDescription}>{reminderMessage}</Text>
+          </View>
+          {reminderBusy ? (
+            <ActivityIndicator color="#3188A8" />
+          ) : (
+            <Switch
+              accessibilityLabel="Sip reminders every 2 minutes"
+              value={sipRemindersEnabled}
+              onValueChange={setSipReminders}
+              trackColor={{ false: '#C5D5DB', true: '#8AC7A1' }}
+              thumbColor={sipRemindersEnabled ? '#FFFFFF' : '#FFFFFF'}
+            />
+          )}
         </View>
 
         {__DEV__ && (
@@ -213,6 +301,10 @@ const styles = StyleSheet.create({
   progressPercent: { color: '#327E98', fontSize: 12, fontWeight: '700' },
   remaining: { color: '#6B96A6', fontSize: 12 },
   connectionRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10, marginTop: 18 },
+  reminderCard: { minHeight: 76, marginTop: 16, paddingHorizontal: 17, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
+  reminderCopy: { flex: 1, paddingRight: 12 },
+  reminderTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
+  reminderDescription: { color: '#6E909D', fontSize: 11, marginTop: 4, lineHeight: 16 },
   bluetoothBubble: { flex: 1, minWidth: 0, minHeight: 68, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, borderRadius: 19, borderWidth: 1 },
   bluetoothBubbleConnected: { backgroundColor: '#DDF3E6', borderColor: '#A9D7B8' },
   bluetoothBubbleDisconnected: { backgroundColor: '#FCE5E5', borderColor: '#E9B6B6' },
