@@ -1,0 +1,33 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.18039,0.56471,0.71373,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "droplet-water.svg",
+          "name" : "water"
+        },
+        {
+          "image-name" : "droplet-shell.svg",
+          "name" : "shell"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

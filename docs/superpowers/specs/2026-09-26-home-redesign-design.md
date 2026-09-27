@@ -226,7 +226,10 @@ app is backgrounded, so automatic logging never interrupts.
 - The `bleControlCard` block in `src/app/index.tsx`, relocated into the device
   sheet.
 - Confirmed-unreferenced components: `external-link.tsx`, `hint-row.tsx`,
-  `web-badge.tsx`, `themed-text.tsx`, `themed-view.tsx`.
+  `web-badge.tsx`.
+- `themed-text.tsx` and `themed-view.tsx` are **not** unreferenced. An earlier
+  draft of this spec said they were, which was wrong: `app-tabs.web.tsx` imports
+  both. They die only if the web target dies, which is a separate decision.
 
 The Bluetooth and battery bubbles and their 21 dead style entries are already
 removed.

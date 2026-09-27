@@ -8,8 +8,8 @@
     "scheme": "hellohack26",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.alexliu.icup"
+      "bundleIdentifier": "com.alexliu.icup",
+      "icon": "./assets/icup.icon"
     },
     "android": {
       "adaptiveIcon": {
