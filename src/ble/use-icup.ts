@@ -3,7 +3,7 @@ import type { Device, Subscription } from '@sfourdrinier/react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { createSipDetector } from '@/ble/sip-detector';
+import { createSipDetector, FILTER_WINDOW_SAMPLES } from '@/ble/sip-detector';
 import type { DrinkEvent, DrinkSource } from '@/store/types';
 
 export const ICUP_DEVICE_NAME = 'iCup';
@@ -14,6 +14,7 @@ const RECONNECT_DELAY_MS = 1500;
 const SIMULATED_SAMPLE_INTERVAL_MS = 250;
 const SIMULATED_BATTERY_PCT = 87;
 const SIMULATED_JITTER_G = 2;
+const SIMULATED_MIN_SAMPLES_PER_STEP = FILTER_WINDOW_SAMPLES + 4;
 
 export type AddDrink = (ml: number, source: DrinkSource) => Promise<DrinkEvent>;
 
@@ -240,7 +241,10 @@ export const createSimulatedWeightSource =
     const sipG = options.sipG ?? 60;
     const emptyAtG = options.emptyAtG ?? 100;
     const intervalMs = options.intervalMs ?? SIMULATED_SAMPLE_INTERVAL_MS;
-    const samplesPerStep = Math.max(2, options.samplesPerStep ?? 4);
+    const samplesPerStep = Math.max(
+      SIMULATED_MIN_SAMPLES_PER_STEP,
+      options.samplesPerStep ?? SIMULATED_MIN_SAMPLES_PER_STEP,
+    );
 
     let level = startG;
     let heldSamples = 0;
