@@ -18,6 +18,7 @@ export type HydrationStore = {
   dailyGoalMl: number;
   lastDrinkAt: number | null;
   addDrink: (ml: number, source: DrinkSource) => Promise<DrinkEvent>;
+  removeDrink: (id: string) => Promise<void>;
   setDailyGoal: (ml: number) => Promise<void>;
   dayTotals: (fromDay: string, toDay: string) => DayTotal[];
   eventsSince: (at: number) => DrinkEvent[];

@@ -78,6 +78,11 @@ export const insertDrinkEventAsync = async (event: DrinkEvent): Promise<void> =>
   );
 };
 
+export const deleteDrinkEventAsync = async (id: string): Promise<void> => {
+  const db = await openHydrationDatabaseAsync();
+  await db.runAsync('DELETE FROM drink_events WHERE id = ?', [id]);
+};
+
 export const readSettingAsync = async (key: string): Promise<string | null> => {
   const db = await openHydrationDatabaseAsync();
   const row = await db.getFirstAsync<SettingRow>('SELECT value FROM settings WHERE key = ?', [key]);

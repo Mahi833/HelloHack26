@@ -9,6 +9,11 @@ export const ICUP_SERVICE_UUID = '7a1e0001-5c2b-4e3a-9f6d-2b8c0a4d1e01';
 export const ICUP_WEIGHT_UUID = '7a1e0002-5c2b-4e3a-9f6d-2b8c0a4d1e01';
 const ICUP_TARE_COMMAND = 'dA==';
 export const ICUP_TARE_UUID = '7a1e0003-5c2b-4e3a-9f6d-2b8c0a4d1e01';
+export const ICUP_ALERT_UUID = '7a1e0004-5c2b-4e3a-9f6d-2b8c0a4d1e01';
+const ICUP_ALERT_ON_COMMAND = 'MQ==';
+const ICUP_ALERT_OFF_COMMAND = 'MA==';
+const ICUP_ALERT_ON_BYTE = 49;
+const ICUP_ALERT_OFF_BYTE = 48;
 export const BATTERY_SERVICE_UUID = '0000180f-0000-1000-8000-00805f9b34fb';
 export const BATTERY_LEVEL_UUID = '00002a19-0000-1000-8000-00805f9b34fb';
 
@@ -22,6 +27,7 @@ type IcupBleState = {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   tare: () => Promise<void>;
+  setDrinkAlert: (on: boolean) => Promise<void>;
 };
 
 type BrowserGattCharacteristic = {
@@ -99,6 +105,8 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
   const disconnectSubscriptionRef = useRef<Subscription | null>(null);
   const browserDeviceRef = useRef<BrowserBluetoothDevice | null>(null);
   const browserTareCharacteristicRef = useRef<BrowserGattCharacteristic | null>(null);
+  const browserAlertCharacteristicRef = useRef<BrowserGattCharacteristic | null>(null);
+  const sentAlertRef = useRef<boolean | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [latestWeightGrams, setLatestWeightGrams] = useState<number | null>(null);
@@ -162,6 +170,9 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
         const service = await server.getPrimaryService(ICUP_SERVICE_UUID);
         const weightCharacteristic = await service.getCharacteristic(ICUP_WEIGHT_UUID);
         browserTareCharacteristicRef.current = await service.getCharacteristic(ICUP_TARE_UUID);
+        browserAlertCharacteristicRef.current = await service
+          .getCharacteristic(ICUP_ALERT_UUID)
+          .catch(() => null);
         await weightCharacteristic.startNotifications();
         weightCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
           const value = event.target?.value;
@@ -191,6 +202,8 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
         device.addEventListener('gattserverdisconnected', () => {
           browserDeviceRef.current = null;
           browserTareCharacteristicRef.current = null;
+          browserAlertCharacteristicRef.current = null;
+          sentAlertRef.current = null;
           setIsConnected(false);
           setBatteryPercentage(null);
           setIsWorking(false);
@@ -282,6 +295,9 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
             disconnectSubscriptionRef.current = manager.onDeviceDisconnected(connectedDevice.id, () => {
               clearSubscriptions();
               deviceIdRef.current = null;
+              sentAlertRef.current = null;
+              setLatestWeightGrams(null);
+              setLatestSample(null);
               setIsConnected(false);
               setBatteryPercentage(null);
               setIsWorking(false);
@@ -318,7 +334,11 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
       browserDeviceRef.current?.gatt?.disconnect();
       browserDeviceRef.current = null;
       browserTareCharacteristicRef.current = null;
+      browserAlertCharacteristicRef.current = null;
+      sentAlertRef.current = null;
       setIsConnected(false);
+      setLatestWeightGrams(null);
+      setLatestSample(null);
       setBatteryPercentage(null);
       setIsWorking(false);
       setMessage('Disconnected from SipBase.');
@@ -332,7 +352,10 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
     clearSubscriptions();
     const deviceId = deviceIdRef.current;
     deviceIdRef.current = null;
+    sentAlertRef.current = null;
     if (deviceId) await manager.cancelDeviceConnection(deviceId).catch(() => undefined);
+    setLatestWeightGrams(null);
+    setLatestSample(null);
     setIsConnected(false);
     setBatteryPercentage(null);
     setIsWorking(false);
@@ -367,8 +390,35 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
     }
   }, [isConnected]);
 
+  const setDrinkAlert = useCallback(async (on: boolean) => {
+    if (sentAlertRef.current === on) return;
+    if (Platform.OS === 'web') {
+      const characteristic = browserAlertCharacteristicRef.current;
+      if (!characteristic) return;
+      try {
+        await characteristic.writeValue(new Uint8Array([on ? ICUP_ALERT_ON_BYTE : ICUP_ALERT_OFF_BYTE]));
+        sentAlertRef.current = on;
+      } catch {
+      }
+      return;
+    }
+    const manager = managerRef.current;
+    const deviceId = deviceIdRef.current;
+    if (!manager || !deviceId || !isConnected) return;
+    try {
+      await manager.writeCharacteristicWithResponseForDevice(
+        deviceId,
+        ICUP_SERVICE_UUID,
+        ICUP_ALERT_UUID,
+        on ? ICUP_ALERT_ON_COMMAND : ICUP_ALERT_OFF_COMMAND,
+      );
+      sentAlertRef.current = on;
+    } catch {
+    }
+  }, [isConnected]);
+
   return (
-    <IcupBleContext.Provider value={{ isConnected, isWorking, latestWeightGrams, latestSample, batteryPercentage, message, connect, disconnect, tare }}>
+    <IcupBleContext.Provider value={{ isConnected, isWorking, latestWeightGrams, latestSample, batteryPercentage, message, connect, disconnect, tare, setDrinkAlert }}>
       {children}
     </IcupBleContext.Provider>
   );

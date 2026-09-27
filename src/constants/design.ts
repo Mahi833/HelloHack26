@@ -3,8 +3,8 @@ import { Platform, StyleSheet } from 'react-native';
 export const Palette = {
   canvas: '#F4FAFC',
   canvasDeep: '#E4F2F8',
-  ambientWarm: 'rgba(120, 214, 240, 0.30)',
-  ambientCool: 'rgba(49, 136, 168, 0.16)',
+  ambientWarm: 'rgba(86, 190, 222, 0.44)',
+  ambientCool: 'rgba(38, 116, 148, 0.28)',
   glass: 'rgba(255, 255, 255, 0.62)',
   glassStrong: 'rgba(255, 255, 255, 0.82)',
   glassTint: 'rgba(221, 243, 250, 0.72)',

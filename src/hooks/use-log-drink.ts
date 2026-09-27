@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-import { writeWaterMl } from '@/health/healthkit';
+import { deleteWaterMl, writeWaterMl } from '@/health/healthkit';
 import { useHydrationStore } from '@/store/hydration-store';
 import type { DrinkEvent, DrinkSource } from '@/store/types';
 
@@ -14,5 +14,17 @@ export const useLogDrink = (): ((ml: number, source: DrinkSource) => Promise<Dri
       return event;
     },
     [addDrink],
+  );
+};
+
+export const useUndoDrink = (): ((event: DrinkEvent) => Promise<void>) => {
+  const { removeDrink } = useHydrationStore();
+
+  return useCallback(
+    async (event: DrinkEvent) => {
+      await removeDrink(event.id);
+      deleteWaterMl(event.at).catch(() => {});
+    },
+    [removeDrink],
   );
 };

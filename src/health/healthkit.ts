@@ -1,4 +1,5 @@
 import {
+  deleteObjects,
   getMostRecentWorkout,
   isHealthDataAvailable,
   queryCategorySamples,
@@ -26,6 +27,8 @@ const SLEEP_IDENTIFIER = 'HKCategoryTypeIdentifierSleepAnalysis';
 const WORKOUT_IDENTIFIER = 'HKWorkoutTypeIdentifier';
 
 const MILLILITRE_UNIT = 'mL';
+
+const HEALTH_DELETE_WINDOW_MS = 1000;
 
 const SLEEP_LOOKBACK_MS = 48 * 60 * 60 * 1000;
 const SLEEP_SAMPLE_LIMIT = 120;
@@ -78,6 +81,21 @@ export const writeWaterMl = async (ml: number, at: number): Promise<boolean> => 
     const when = new Date(at);
     const saved = await saveQuantitySample(WATER_IDENTIFIER, MILLILITRE_UNIT, volume, when, when);
     return saved !== undefined;
+  } catch {
+    return false;
+  }
+};
+
+export const deleteWaterMl = async (at: number): Promise<boolean> => {
+  if (!isHealthAvailable()) return false;
+  try {
+    const removed = await deleteObjects(WATER_IDENTIFIER, {
+      date: {
+        startDate: new Date(at - HEALTH_DELETE_WINDOW_MS),
+        endDate: new Date(at + HEALTH_DELETE_WINDOW_MS),
+      },
+    });
+    return removed > 0;
   } catch {
     return false;
   }

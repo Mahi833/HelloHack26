@@ -156,6 +156,7 @@ const scheduleNudge = async (
       content: {
         title,
         body,
+        sound: 'default',
         data: { kind: HEALTH_REMINDER_KIND, reason: kind, key },
       },
       trigger: {

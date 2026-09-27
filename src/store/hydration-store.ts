@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import {
+  deleteDrinkEventAsync,
   insertDrinkEventAsync,
   readDrinkEventsAsync,
   readSettingAsync,
@@ -104,6 +105,12 @@ const addDrink = async (ml: number, source: DrinkSource): Promise<DrinkEvent> =>
   return event;
 };
 
+const removeDrink = async (id: string): Promise<void> => {
+  await ensureLoaded();
+  await deleteDrinkEventAsync(id);
+  publish({ ...snapshot, events: snapshot.events.filter((event) => event.id !== id) });
+};
+
 const setDailyGoal = async (ml: number): Promise<void> => {
   const goal = requirePositiveMl(ml, 'setDailyGoal');
   await ensureLoaded();
@@ -166,6 +173,7 @@ const useHydrationStoreEngine = (): HydrationStore => {
       dailyGoalMl: current.dailyGoalMl,
       lastDrinkAt: current.events.length > 0 ? current.events[0].at : null,
       addDrink,
+      removeDrink,
       setDailyGoal,
       dayTotals: (fromDay: string, toDay: string) => computeDayTotals(current.events, fromDay, toDay),
       eventsSince: (at: number) => current.events.filter((event) => event.at >= at),

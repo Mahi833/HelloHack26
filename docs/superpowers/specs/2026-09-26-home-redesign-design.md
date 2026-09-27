@@ -33,6 +33,9 @@ asymmetric rather than simply small.
 | Daily goal | Editable, behind the header gear |
 | Appearance | Pinned light, app-wide |
 | Type | SF Rounded on one eight-step scale |
+| Undo | Six second window, retracts the Health sample too |
+| Streak | Own card under progress, current plus best plus seven dots |
+| Goal reached | Confetti overlay, fires only on the crossing |
 
 ## What the references gave us
 
@@ -158,6 +161,42 @@ removes the drink just added and restores the previous total.
 
 This replaces the Quick Add tab entirely.
 
+### Streak card
+
+A card of its own directly under the progress card: the current streak as the
+dominant number, the best run beneath it, and seven dots for the last seven days
+with today ringed.
+
+`computeStreak` in `src/store/streak.ts` is pure and has eleven tests written
+before the implementation. The rules it encodes:
+
+- A day counts when its total reaches the goal. Exactly on the goal counts.
+- **An unfinished today does not break the streak.** The walk back starts at
+  today when today is already met, otherwise at yesterday. Without this the
+  streak would read zero every morning, which is the opposite of encouraging.
+- `best` is the longest run in all history, never less than `current`.
+
+Recorded honestly: the streak measures past days against **today's** goal,
+because the schema stores one current goal and no history of it. Raising the goal
+can therefore shorten a streak that was genuinely earned. Fixing that needs a
+goal-history table, which is not worth it before the demo.
+
+### Undo
+
+Logging by hand arms an Undo for six seconds, and the control row swaps to
+`Added 250 ml` with an Undo button rather than adding a fifth control.
+
+Undo removes the event from SQLite **and** retracts the Apple Health sample via
+`deleteObjects` with a one second window around the event timestamp. HealthKit
+only permits an app to delete samples it authored, so the window cannot touch
+another app's data. Without that second step the app total and Apple Health
+would silently disagree, which is the same class of trust failure as the silent
+sync problem above.
+
+Automatic cup sips are not undoable. They arrive without a tap, so there is no
+moment to attach the affordance to, and a mis-logged sip is a detector problem
+rather than a user error.
+
 ### Reminder line
 
 One line: `Next reminder 4:30pm` and the toggle.
@@ -261,6 +300,24 @@ haptics settings. There will be no vibrate toggle.
 When the cup logs a sip while the app is foregrounded, a short buzz via React
 Native's built-in `Vibration` API. No new dependency. Nothing fires while the
 app is backgrounded, so automatic logging never interrupts.
+
+## Goal celebration
+
+Crossing the goal shows a full-screen overlay: nine confetti pieces falling on
+staggered delays, a glass card reading `Goal reached` with the total and the
+streak, auto-dismissed after 3.2 s or on tap.
+
+**It fires on the crossing, not on the condition.** The effect compares the
+previous `todayMl` against the current one and requires all three of: the total
+went up, the previous total was under the goal, and the new total is at or over
+it. A cold launch with the goal already met does not celebrate, because the
+first ready render seeds the previous value and returns. Lowering the goal in
+settings until it sits under the current total does not celebrate either, since
+the total did not increase.
+
+Under Reduce Motion the confetti should be dropped and the card shown alone.
+That is not implemented yet and belongs with the Reduce Motion work already
+recorded as an existing defect.
 
 ## Accessibility
 

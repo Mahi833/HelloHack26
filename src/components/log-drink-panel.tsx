@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { Palette, Radius, Space, Surface, Type } from '@/constants/design';
+import type { DrinkEvent } from '@/store/types';
 
 const SERVINGS = [150, 250, 350] as const;
 
@@ -10,29 +11,56 @@ const CUSTOM_STEP_ML = 50;
 const CUSTOM_MIN_ML = 50;
 const CUSTOM_MAX_ML = 2000;
 const CUSTOM_DEFAULT_ML = 500;
+const UNDO_WINDOW_MS = 6000;
 
 export type LogDrinkPanelProps = {
-  onAdd: (amountMl: number) => void;
+  onAdd: (amountMl: number) => Promise<DrinkEvent | null>;
+  onUndo: (event: DrinkEvent) => void;
   cupConnected: boolean;
   cupWeightG: number | null;
 };
 
-export const LogDrinkPanel = ({ onAdd, cupConnected, cupWeightG }: LogDrinkPanelProps) => {
+export const LogDrinkPanel = ({ onAdd, onUndo, cupConnected, cupWeightG }: LogDrinkPanelProps) => {
   const [expanded, setExpanded] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [customMl, setCustomMl] = useState(CUSTOM_DEFAULT_ML);
+  const [undoable, setUndoable] = useState<DrinkEvent | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearUndoTimer = () => {
+    if (undoTimer.current !== null) {
+      clearTimeout(undoTimer.current);
+      undoTimer.current = null;
+    }
+  };
+
+  useEffect(() => clearUndoTimer, []);
+
+  const armUndo = (event: DrinkEvent | null) => {
+    if (event === null) return;
+    clearUndoTimer();
+    setUndoable(event);
+    undoTimer.current = setTimeout(() => setUndoable(null), UNDO_WINDOW_MS);
+  };
+
+  const revert = () => {
+    if (undoable === null) return;
+    clearUndoTimer();
+    onUndo(undoable);
+    setUndoable(null);
+  };
 
   const stepCustom = (delta: number) =>
     setCustomMl((value) => Math.min(Math.max(value + delta, CUSTOM_MIN_ML), CUSTOM_MAX_ML));
 
   const confirmCustom = () => {
-    onAdd(customMl);
+    void onAdd(customMl).then(armUndo);
     setCustomOpen(false);
     setCustomMl(CUSTOM_DEFAULT_ML);
   };
 
   const addAndCollapse = (amountMl: number) => {
-    onAdd(amountMl);
+    void onAdd(amountMl).then(armUndo);
     setExpanded(false);
   };
 
@@ -53,14 +81,30 @@ export const LogDrinkPanel = ({ onAdd, cupConnected, cupWeightG }: LogDrinkPanel
         {cupWeightG !== null && <Text style={styles.autoWeight}>{cupWeightG.toFixed(0)} g</Text>}
       </View>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        onPress={() => setExpanded((open) => !open)}
-        style={({ pressed }) => [Surface.glassStrong, styles.toggle, pressed && styles.pressed]}>
-        <Text style={styles.toggleText}>Log a drink by hand</Text>
-        <Text style={styles.toggleChevron}>{expanded ? '–' : '+'}</Text>
-      </Pressable>
+      {undoable !== null ? (
+        <Animated.View
+          entering={FadeIn.duration(140)}
+          exiting={FadeOut.duration(120)}
+          style={[Surface.glassStrong, styles.toggle]}>
+          <Text style={styles.undoText}>Added {undoable.ml.toLocaleString()} ml</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Undo adding ${undoable.ml} millilitres`}
+            onPress={revert}
+            style={({ pressed }) => [styles.undoButton, pressed && styles.pressed]}>
+            <Text style={styles.undoButtonText}>Undo</Text>
+          </Pressable>
+        </Animated.View>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          onPress={() => setExpanded((open) => !open)}
+          style={({ pressed }) => [Surface.glassStrong, styles.toggle, pressed && styles.pressed]}>
+          <Text style={styles.toggleText}>Log a drink by hand</Text>
+          <Text style={styles.toggleChevron}>{expanded ? '–' : '+'}</Text>
+        </Pressable>
+      )}
 
       {expanded && (
         <Animated.View entering={FadeIn.duration(160)} exiting={FadeOut.duration(120)} style={styles.servingRow}>
@@ -147,6 +191,9 @@ const styles = StyleSheet.create({
   toggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Space.lg, height: 52, borderRadius: Radius.medium },
   toggleText: { ...Type.body, color: Palette.inkSoft, fontWeight: '600' },
   toggleChevron: { ...Type.heading, color: Palette.accent, fontSize: 22, lineHeight: 26 },
+  undoText: { ...Type.body, color: Palette.inkSoft, fontWeight: '600' },
+  undoButton: { paddingHorizontal: Space.md, height: 34, justifyContent: 'center', borderRadius: Radius.pill, backgroundColor: Palette.accent },
+  undoButtonText: { ...Type.caption, color: Palette.onAccent, fontWeight: '700' },
   servingRow: { flexDirection: 'row', gap: Space.sm },
   serving: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: Space.md, borderRadius: Radius.medium },
   servingAmount: { ...Type.subheading, color: Palette.waterDeep, fontVariant: ['tabular-nums'] },

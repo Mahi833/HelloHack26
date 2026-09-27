@@ -1,22 +1,30 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { GoalCelebration } from '@/components/goal-celebration';
 import { LogDrinkPanel } from '@/components/log-drink-panel';
 import { ScreenBackground } from '@/components/screen-background';
 import { ScreenHeader } from '@/components/screen-header';
+import { StreakCard, type StreakDay } from '@/components/streak-card';
 import { REMINDER_CHOICES, SettingsSheet } from '@/components/settings-sheet';
 import { WaterOrb } from '@/components/water-orb';
 import { Palette, Radius, Space, Surface, Type } from '@/constants/design';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
+import { computeStreak } from '@/store/streak';
+import { localDayKey, type DrinkEvent } from '@/store/types';
 import { createSimulatedWeightSource, useIcup, useIcupSips } from '@/ble/use-icup';
+import { shouldAlertToDrink } from '@/ble/drink-alert';
 import { useIcupBle } from '@/contexts/icup-ble-context';
 import type { WorkoutSummary } from '@/health/healthkit';
 import { useHealthReminders } from '@/health/use-health-reminders';
-import { useLogDrink } from '@/hooks/use-log-drink';
+import { useLogDrink, useUndoDrink } from '@/hooks/use-log-drink';
 import { useWaterTilt } from '@/motion/use-water-tilt';
 
 const DEV_DRINK_ML = 250;
+const STREAK_LOOKBACK_DAYS = 400;
+const WEEK_DOTS = 7;
+const DAY_MS = 86400000;
 
 const describeClock = (at: number): string =>
   new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -50,6 +58,41 @@ const cancelSipReminders = async () => {
   );
 };
 
+const scheduleSipReminder = async (minutes: number): Promise<void> => {
+  await cancelSipReminders();
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('sip-reminders', {
+      name: 'Sip reminders',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: 'default',
+    });
+  }
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: 'Time for a sip!',
+      body: 'Take a moment to drink some water.',
+      sound: 'default',
+      data: { kind: 'sip-reminder' },
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+      seconds: minutes * 60,
+      repeats: true,
+      ...(Platform.OS === 'android' ? { channelId: 'sip-reminders' } : {}),
+    },
+  });
+};
+
+const triggerMinutes = (trigger: unknown): number | null => {
+  if (typeof trigger !== 'object' || trigger === null) return null;
+  const seconds = (trigger as { seconds?: unknown }).seconds;
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.max(1, Math.round(seconds / 60));
+};
+
+const playsSound = (sound: unknown): boolean =>
+  typeof sound === 'string' ? sound.length > 0 : sound === true;
+
 export default function HomeScreen() {
   const [devPanelOpen, setDevPanelOpen] = useState(false);
   const [simulatedCup, setSimulatedCup] = useState(false);
@@ -59,8 +102,9 @@ export default function HomeScreen() {
   const [reminderBusy, setReminderBusy] = useState(false);
   const [reminderMessage, setReminderMessage] = useState('Reminders are off.');
 
-  const { ready, todayMl, dailyGoalMl, lastDrinkAt, setDailyGoal } = useHydrationStore();
+  const { ready, todayMl, dailyGoalMl, lastDrinkAt, setDailyGoal, dayTotals } = useHydrationStore();
   const logDrink = useLogDrink();
+  const undoDrink = useUndoDrink();
   const now = useClock();
   const minutesSinceDrink = lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
 
@@ -78,7 +122,58 @@ export default function HomeScreen() {
   const cupWeightG = simulatedCup ? simulated.weightG : icupBle.latestWeightGrams;
   const cupError = simulatedCup ? simulated.error : liveSipError;
 
+  const todayKey = localDayKey(now);
+
+  const history = useMemo(
+    () => dayTotals(localDayKey(now - STREAK_LOOKBACK_DAYS * DAY_MS), todayKey),
+    [dayTotals, now, todayKey],
+  );
+  const streak = useMemo(
+    () => computeStreak(history, dailyGoalMl, todayKey),
+    [history, dailyGoalMl, todayKey],
+  );
+  const recentDays = useMemo<StreakDay[]>(() => {
+    const totalByDay = new Map(history.map((entry) => [entry.day, entry.ml]));
+    return Array.from({ length: WEEK_DOTS }, (_, index) => {
+      const at = now - (WEEK_DOTS - 1 - index) * DAY_MS;
+      const day = localDayKey(at);
+      return {
+        label: new Date(at).toLocaleDateString([], { weekday: 'narrow' }),
+        met: dailyGoalMl > 0 && (totalByDay.get(day) ?? 0) >= dailyGoalMl,
+        isToday: day === todayKey,
+      };
+    });
+  }, [history, now, todayKey, dailyGoalMl]);
+
+  const [celebrating, setCelebrating] = useState(false);
+  const previousTodayMl = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!ready) return;
+    const previous = previousTodayMl.current;
+    previousTodayMl.current = todayMl;
+    if (previous === null) return;
+    if (todayMl > previous && previous < dailyGoalMl && todayMl >= dailyGoalMl) {
+      setCelebrating(true);
+    }
+  }, [ready, todayMl, dailyGoalMl]);
+
   const progress = dailyGoalMl > 0 ? Math.min(todayMl / dailyGoalMl, 1) : 0;
+
+  const cupAlert = shouldAlertToDrink({
+    remindersEnabled: sipRemindersEnabled,
+    lastDrinkAt,
+    now,
+    intervalMinutes: reminderMinutes,
+    goalReached: ready && dailyGoalMl > 0 && todayMl >= dailyGoalMl,
+  });
+  const { isConnected: cupLinked, setDrinkAlert } = icupBle;
+
+  useEffect(() => {
+    if (!cupLinked) return;
+    void setDrinkAlert(cupAlert);
+  }, [cupLinked, cupAlert, setDrinkAlert]);
+
   const waterMotion = useWaterTilt(ready);
   const remaining = Math.max(dailyGoalMl - todayMl, 0);
 
@@ -89,7 +184,15 @@ export default function HomeScreen() {
         const existing = scheduled.find((item) => item.content.data?.kind === 'sip-reminder');
         if (!mounted) return;
         setSipRemindersEnabled(existing !== undefined);
-        if (existing !== undefined) setReminderMessage('Reminders are on.');
+        if (existing === undefined) return;
+        const minutes = triggerMinutes(existing.trigger) ?? REMINDER_CHOICES[0].minutes;
+        setReminderMinutes(minutes);
+        if (playsSound(existing.content.sound)) {
+          setReminderMessage('Reminders are on.');
+          return;
+        }
+        setReminderMessage('Reminders are on, now with sound.');
+        void scheduleSipReminder(minutes);
       })
       .catch(() => {
         if (mounted) setReminderMessage('Notifications are unavailable on this device.');
@@ -109,12 +212,6 @@ export default function HomeScreen() {
         setReminderMessage('Reminders are off.');
         return;
       }
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('sip-reminders', {
-          name: 'Sip reminders',
-          importance: Notifications.AndroidImportance.DEFAULT,
-        });
-      }
       let permission = await Notifications.getPermissionsAsync();
       if (!permission.granted) permission = await Notifications.requestPermissionsAsync();
       if (!permission.granted) {
@@ -122,20 +219,7 @@ export default function HomeScreen() {
         setReminderMessage('Allow notifications in Settings to turn on reminders.');
         return;
       }
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: 'Time for a sip!',
-          body: 'Take a moment to drink some water.',
-          sound: 'default',
-          data: { kind: 'sip-reminder' },
-        },
-        trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-          seconds: minutes * 60,
-          repeats: true,
-          ...(Platform.OS === 'android' ? { channelId: 'sip-reminders' } : {}),
-        },
-      });
+      await scheduleSipReminder(minutes);
       setSipRemindersEnabled(true);
       setReminderMessage(`${describeFrequency(minutes)}, starting now.`);
     } catch {
@@ -155,8 +239,17 @@ export default function HomeScreen() {
     }
   };
 
-  const logManualDrink = (ml: number) => {
-    logDrink(ml, 'manual').catch((error: unknown) => console.warn('Could not save that drink', error));
+  const logManualDrink = async (ml: number): Promise<DrinkEvent | null> => {
+    try {
+      return await logDrink(ml, 'manual');
+    } catch (error: unknown) {
+      console.warn('Could not save that drink', error);
+      return null;
+    }
+  };
+
+  const revertDrink = (event: DrinkEvent) => {
+    undoDrink(event).catch((error: unknown) => console.warn('Could not undo that drink', error));
   };
 
   const changeGoal = (ml: number) => {
@@ -207,7 +300,14 @@ export default function HomeScreen() {
             </Text>
           </View>
 
-          <LogDrinkPanel onAdd={logManualDrink} cupConnected={cupConnected} cupWeightG={cupWeightG} />
+          <StreakCard current={streak.current} best={streak.best} recent={recentDays} />
+
+          <LogDrinkPanel
+            onAdd={logManualDrink}
+            onUndo={revertDrink}
+            cupConnected={cupConnected}
+            cupWeightG={cupWeightG}
+          />
 
           {__DEV__ && (
             <View style={[Surface.glassTint, styles.devPanel]}>
@@ -237,7 +337,7 @@ export default function HomeScreen() {
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={`Log ${DEV_DRINK_ML} millilitres`}
-                      onPress={() => logManualDrink(DEV_DRINK_ML)}
+                      onPress={() => void logManualDrink(DEV_DRINK_ML)}
                       style={styles.devToggle}>
                       <Text style={styles.devToggleText}>Add {DEV_DRINK_ML} ml</Text>
                     </Pressable>
@@ -281,6 +381,14 @@ export default function HomeScreen() {
             </View>
           )}
         </ScrollView>
+
+        <GoalCelebration
+          visible={celebrating}
+          todayMl={todayMl}
+          dailyGoalMl={dailyGoalMl}
+          streakDays={streak.current}
+          onDismiss={() => setCelebrating(false)}
+        />
 
         <SettingsSheet
           visible={settingsOpen}
