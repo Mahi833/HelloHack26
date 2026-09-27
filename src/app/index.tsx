@@ -5,11 +5,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
 import { createBleWeightSource, createSimulatedWeightSource, useIcup } from '@/ble/use-icup';
+import type { WorkoutSummary } from '@/health/healthkit';
 import { useHealthReminders } from '@/health/use-health-reminders';
 import { useLogDrink } from '@/hooks/use-log-drink';
 
 const GOAL_STEP_ML = 250;
 const MIN_GOAL_ML = 250;
+
+const describeClock = (at: number): string =>
+  new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+const describeWorkout = (workout: WorkoutSummary | null): string => {
+  if (workout === null) return 'no workout found';
+  const energy = workout.activeEnergyKcal === null ? '' : `, ${workout.activeEnergyKcal} kcal`;
+  return `${workout.intensity}, ${workout.durationMinutes} min${energy} at ${describeClock(workout.endedAt)}`;
+};
 
 export default function HomeScreen() {
   const [devPanelOpen, setDevPanelOpen] = useState(false);
@@ -234,6 +244,18 @@ export default function HomeScreen() {
                 <View style={styles.devRow}>
                   <Text style={styles.devLabel}>Apple Health</Text>
                   <Text style={styles.devValue}>{health.healthAuthorized ? 'authorized' : 'not authorized'}</Text>
+                </View>
+                <View style={styles.devRow}>
+                  <Text style={styles.devLabel}>Health last read</Text>
+                  <Text style={styles.devValue}>{health.lastCheckedAt === null ? 'never' : describeClock(health.lastCheckedAt)}</Text>
+                </View>
+                <View style={styles.devRow}>
+                  <Text style={styles.devLabel}>Last workout</Text>
+                  <Text style={styles.devValue}>{describeWorkout(health.lastWorkout)}</Text>
+                </View>
+                <View style={styles.devRow}>
+                  <Text style={styles.devLabel}>Woke up</Text>
+                  <Text style={styles.devValue}>{health.lastSleep === null ? 'no sleep data' : describeClock(health.lastSleep.wokeAt)}</Text>
                 </View>
                 <View style={styles.devRow}>
                   <Text style={styles.devLabel}>Last health nudge</Text>

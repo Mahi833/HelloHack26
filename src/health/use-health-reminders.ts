@@ -10,6 +10,7 @@ import {
   requestHydrationAuthorization,
   writeWaterMl,
 } from '@/health/healthkit';
+import type { SleepSummary, WorkoutSummary } from '@/health/healthkit';
 import type { DrinkSource } from '@/store/types';
 import { localDayKey } from '@/store/types';
 
@@ -35,6 +36,8 @@ export type HealthReminders = {
   notificationsAllowed: boolean;
   lastCheckedAt: number | null;
   lastNudge: ScheduledNudge | null;
+  lastWorkout: WorkoutSummary | null;
+  lastSleep: SleepSummary | null;
   checkNow: () => Promise<void>;
   logDrinkMl: (ml: number) => Promise<void>;
 };
@@ -167,8 +170,10 @@ const scheduleNudge = async (
   }
 };
 
-const planWorkoutNudge = async (now: number): Promise<ScheduledNudge | null> => {
-  const workout = await readLastWorkout();
+const planWorkoutNudge = async (
+  now: number,
+  workout: WorkoutSummary | null,
+): Promise<ScheduledNudge | null> => {
   if (!workout) return null;
   if (now - workout.endedAt > WORKOUT_FRESH_WINDOW_MS) return null;
   const key = `workout:${workout.endedAt}`;
@@ -183,11 +188,11 @@ const planWakeNudge = async (
   now: number,
   lastDrinkAt: number | null,
   todayMl: number,
+  sleep: SleepSummary | null,
 ): Promise<ScheduledNudge | null> => {
   const today = localDayKey(now);
   if (todayMl > 0) return null;
   if (lastDrinkAt !== null && localDayKey(lastDrinkAt) === today) return null;
-  const sleep = await readLastSleep();
   if (!sleep) return null;
   if (localDayKey(sleep.wokeAt) !== today) return null;
   if (now - sleep.wokeAt > WAKE_FRESH_WINDOW_MS) return null;
@@ -230,6 +235,8 @@ export const useHealthReminders = (options: HealthRemindersOptions): HealthRemin
   const [notificationsAllowed, setNotificationsAllowed] = useState(false);
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
   const [lastNudge, setLastNudge] = useState<ScheduledNudge | null>(null);
+  const [lastWorkout, setLastWorkout] = useState<WorkoutSummary | null>(null);
+  const [lastSleep, setLastSleep] = useState<SleepSummary | null>(null);
 
   const latest = useRef({ lastDrinkAt, todayMl, enabled, idleGapMs });
 
@@ -263,10 +270,13 @@ export const useHealthReminders = (options: HealthRemindersOptions): HealthRemin
       const allowed = await prepare();
       const now = Date.now();
       setLastCheckedAt(now);
+      const [workout, sleep] = await Promise.all([readLastWorkout(), readLastSleep()]);
+      setLastWorkout(workout);
+      setLastSleep(sleep);
       if (!allowed) return;
       const nudge =
-        (await planWorkoutNudge(now)) ??
-        (await planWakeNudge(now, latest.current.lastDrinkAt, latest.current.todayMl)) ??
+        (await planWorkoutNudge(now, workout)) ??
+        (await planWakeNudge(now, latest.current.lastDrinkAt, latest.current.todayMl, sleep)) ??
         (await planIdleNudge(now, latest.current.lastDrinkAt, latest.current.idleGapMs));
       if (nudge) setLastNudge(nudge);
     } finally {
@@ -303,6 +313,8 @@ export const useHealthReminders = (options: HealthRemindersOptions): HealthRemin
     notificationsAllowed,
     lastCheckedAt,
     lastNudge,
+    lastWorkout,
+    lastSleep,
     checkNow,
     logDrinkMl,
   };
