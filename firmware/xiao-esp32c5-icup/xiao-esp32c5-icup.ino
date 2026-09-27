@@ -117,8 +117,8 @@ class IcupServerCallbacks : public NimBLEServerCallbacks {
 class TareCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo) override {
     (void)connInfo;
-    const std::string value = characteristic->getValue();
-    if (value.empty() || value[0] == TARE_COMMAND) {
+    const auto value = characteristic->getValue();
+    if (value.length() == 0 || value.c_str()[0] == TARE_COMMAND) {
       tareRequested = true;
       Serial.println("Tare requested over BLE");
     }
@@ -128,10 +128,11 @@ class TareCallbacks : public NimBLECharacteristicCallbacks {
 class AlertCallbacks : public NimBLECharacteristicCallbacks {
   void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo) override {
     (void)connInfo;
-    const std::string value = characteristic->getValue();
-    if (value.empty()) return;
-    if (value[0] == ALERT_ON_COMMAND) showDrinkAlert();
-    if (value[0] == ALERT_OFF_COMMAND) clearDrinkAlert();
+    const auto value = characteristic->getValue();
+    if (value.length() == 0) return;
+    const char command = value.c_str()[0];
+    if (command == ALERT_ON_COMMAND) showDrinkAlert();
+    if (command == ALERT_OFF_COMMAND) clearDrinkAlert();
   }
 };
 
@@ -165,8 +166,6 @@ void startBleServer() {
 
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(SERVICE_UUID);
-  advertising->setName(DEVICE_NAME);
-  advertising->enableScanResponse(true);
   advertising->start();
 
   Serial.print("BLE advertising as ");
