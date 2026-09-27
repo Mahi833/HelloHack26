@@ -5,12 +5,11 @@ import type { WaterMotion } from '@/motion/use-water-tilt';
 
 const ORB_SIZE = 96;
 const PIVOT_WIDTH = ORB_SIZE * 3;
-const BLOB_SIZE = Math.round(ORB_SIZE * 1.7);
-const BLOB_LEFT = PIVOT_WIDTH / 2 - BLOB_SIZE / 2;
-const BLOB_SPREAD = Math.round(ORB_SIZE * 0.28);
+const CREST_SIZE = Math.round(ORB_SIZE * 2.6);
+const CREST_LEFT = PIVOT_WIDTH / 2 - CREST_SIZE / 2;
 const REST_DOME = 7;
-const CREST_RISE = 11;
-const CREST_DRIFT = 8;
+const CREST_DRIFT = 15;
+const CREST_HEAVE = 6;
 
 export type WaterOrbProps = {
   progress: number;
@@ -25,17 +24,10 @@ export const WaterOrb = ({ progress, motion }: WaterOrbProps) => {
     transform: [{ rotate: `${tiltDeg.value}deg` }],
   }));
 
-  const leadingCrestStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: -slosh.value * CREST_DRIFT },
-      { translateY: -slosh.value * CREST_RISE },
-    ],
-  }));
-
-  const trailingCrestStyle = useAnimatedStyle(() => ({
+  const crestStyle = useAnimatedStyle(() => ({
     transform: [
       { translateX: slosh.value * CREST_DRIFT },
-      { translateY: slosh.value * CREST_RISE },
+      { translateY: -Math.abs(slosh.value) * CREST_HEAVE },
     ],
   }));
 
@@ -45,12 +37,7 @@ export const WaterOrb = ({ progress, motion }: WaterOrbProps) => {
       accessibilityRole="progressbar"
       accessibilityValue={{ min: 0, max: 100, now: Math.round(level * 100) }}>
       <Animated.View style={[styles.pivot, { top: ORB_SIZE * (1 - level) }, pivotStyle]}>
-        <Animated.View
-          style={[styles.crest, { left: BLOB_LEFT - BLOB_SPREAD }, leadingCrestStyle]}
-        />
-        <Animated.View
-          style={[styles.crest, { left: BLOB_LEFT + BLOB_SPREAD }, trailingCrestStyle]}
-        />
+        <Animated.View style={[styles.crest, crestStyle]} />
         <View style={styles.body} />
       </Animated.View>
     </View>
@@ -71,14 +58,15 @@ const styles = StyleSheet.create({
   crest: {
     position: 'absolute',
     top: -REST_DOME,
-    width: BLOB_SIZE,
-    height: BLOB_SIZE,
-    borderRadius: BLOB_SIZE / 2,
-    backgroundColor: '#52B2CF',
+    left: CREST_LEFT,
+    width: CREST_SIZE,
+    height: CREST_SIZE,
+    borderRadius: CREST_SIZE / 2,
+    backgroundColor: '#45A9C9',
   },
   body: {
     position: 'absolute',
-    top: 0,
+    top: CREST_SIZE / 2 - REST_DOME,
     left: 0,
     right: 0,
     height: ORB_SIZE * 3,
