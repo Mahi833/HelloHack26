@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
@@ -46,13 +46,11 @@ export default function HomeScreen() {
   });
   const health = useHealthReminders({ lastDrinkAt, todayMl, addDrink: logDrink });
 
-  const cupConnected = simulatedCup ? simulated.connected : icupBle.isConnected;
   const cupWeightG = simulatedCup ? simulated.weightG : icupBle.latestWeightGrams;
-  const shownBattery = simulatedCup ? simulated.batteryPct : icupBle.batteryPercentage;
   const cupError = simulatedCup ? simulated.error : liveSipError;
 
   const progress = dailyGoalMl > 0 ? Math.min(todayMl / dailyGoalMl, 1) : 0;
-  const tiltDeg = useWaterTilt(ready);
+  const waterMotion = useWaterTilt(ready);
   const remaining = Math.max(dailyGoalMl - todayMl, 0);
 
   useEffect(() => {
@@ -141,7 +139,7 @@ export default function HomeScreen() {
             <View>
               <Text style={styles.cardTitle}>TODAY&apos;S PROGRESS</Text>
             </View>
-            <WaterOrb progress={progress} tiltDeg={tiltDeg} />
+            <WaterOrb progress={progress} motion={waterMotion} />
           </View>
 
           <View style={styles.fractionRow}>
@@ -160,44 +158,6 @@ export default function HomeScreen() {
             <Text style={styles.remaining}>
               {!ready ? 'Loading your saved drinks' : remaining === 0 ? 'Goal reached!' : `${remaining.toLocaleString()} ml to go`}
             </Text>
-          </View>
-        </View>
-
-        <View style={styles.connectionRow}>
-          <View
-            style={[styles.bluetoothBubble, cupConnected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
-            accessibilityRole="text"
-            accessibilityLabel={`iCup Bluetooth is ${cupConnected ? 'connected' : 'not connected'}`}>
-            <Image
-              source={require('@/assets/images/icup-bluetooth-badge.png')}
-              resizeMode="contain"
-              style={styles.bluetoothImage}
-              accessibilityLabel="Bluetooth"
-            />
-            <View style={styles.connectionCopy}>
-              <Text style={styles.connectionTitle}>Bluetooth</Text>
-              <View style={styles.connectionStateLine}>
-                <View style={[styles.statusDot, cupConnected ? styles.connectedDot : styles.disconnectedDot]} />
-                <Text style={[styles.connectionStatusText, cupConnected && styles.connectedStatusText]} numberOfLines={1}>
-                  {cupConnected
-                    ? simulatedCup ? 'Simulated cup' : 'Connected'
-                    : cupError ? 'Bluetooth problem' : 'Not connected'}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={`iCup battery ${shownBattery === null ? 'unavailable' : `${shownBattery} percent`}`}>
-            <View style={styles.batteryIcon}>
-              <View style={styles.batteryCap} />
-              <View style={styles.batteryOutline}>
-                <View style={[styles.batteryFill, { width: `${shownBattery ?? 0}%` }, shownBattery !== null && shownBattery <= 20 && styles.batteryFillLow]} />
-              </View>
-            </View>
-            <View>
-              <Text style={styles.batteryLabel}>Battery</Text>
-              <Text style={styles.batteryValue}>{shownBattery === null ? '--' : `${shownBattery}%`}</Text>
-            </View>
           </View>
         </View>
 
@@ -371,7 +331,6 @@ const styles = StyleSheet.create({
   progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 11 },
   progressPercent: { color: '#327E98', fontSize: 12, fontWeight: '700' },
   remaining: { color: '#6B96A6', fontSize: 12 },
-  connectionRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10, marginTop: 18 },
   bleControlCard: { minHeight: 76, marginTop: 14, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
   bleControlCopy: { flex: 1 },
   bleControlTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
@@ -387,26 +346,6 @@ const styles = StyleSheet.create({
   reminderCopy: { flex: 1, paddingRight: 12 },
   reminderTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
   reminderDescription: { color: '#6E909D', fontSize: 11, marginTop: 4, lineHeight: 16 },
-  bluetoothBubble: { flex: 1, minWidth: 0, minHeight: 68, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, borderRadius: 19, borderWidth: 1 },
-  bluetoothBubbleConnected: { backgroundColor: '#DDF3E6', borderColor: '#A9D7B8' },
-  bluetoothBubbleDisconnected: { backgroundColor: '#FCE5E5', borderColor: '#E9B6B6' },
-  bluetoothImage: { width: 44, height: 44 },
-  connectionCopy: { marginLeft: 10, flex: 1 },
-  connectionTitle: { color: '#245267', fontSize: 13, fontWeight: '700' },
-  connectionStateLine: { flexDirection: 'row', alignItems: 'center', marginTop: 5 },
-  statusDot: { width: 7, height: 7, borderRadius: 4, marginRight: 6 },
-  disconnectedDot: { backgroundColor: '#A7B8BE' },
-  connectedDot: { backgroundColor: '#28A765' },
-  connectionStatusText: { color: '#8299A2', fontSize: 10, fontWeight: '600' },
-  connectedStatusText: { color: '#278452' },
-  batteryBubble: { width: 112, minHeight: 68, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 19, backgroundColor: '#E5F4F8', borderWidth: 1, borderColor: '#C5DFE7' },
-  batteryIcon: { width: 22, height: 13, flexDirection: 'row', alignItems: 'center' },
-  batteryOutline: { flex: 1, height: 12, padding: 2, justifyContent: 'center', borderRadius: 3, borderWidth: 1.5, borderColor: '#6D9EAD' },
-  batteryCap: { width: 3, height: 6, borderTopRightRadius: 2, borderBottomRightRadius: 2, backgroundColor: '#6D9EAD' },
-  batteryFill: { height: '100%', borderRadius: 1, backgroundColor: '#42A6C2' },
-  batteryFillLow: { backgroundColor: '#D89B47' },
-  batteryLabel: { color: '#7F9CA7', fontSize: 9, fontWeight: '600' },
-  batteryValue: { color: '#326277', fontSize: 13, fontWeight: '700', marginTop: 2 },
   devPanel: { marginTop: 28, borderRadius: 18, backgroundColor: '#EAF1F4', overflow: 'hidden', borderWidth: 1, borderColor: '#C2D1D7' },
   devPanelHeader: { minHeight: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
   devBadge: { color: '#FFFFFF', backgroundColor: '#718D99', fontSize: 9, fontWeight: '800', letterSpacing: 0.8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6 },
