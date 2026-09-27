@@ -23,8 +23,12 @@ test('the app declares a single light appearance', () => {
   const config = JSON.parse(readFileSync(join(ROOT, 'app.json'), 'utf8'));
   assert.equal(config.expo.userInterfaceStyle, 'light', 'app.json still follows the system appearance');
 
-  const plistPath = join(ROOT, 'ios/HelloHack26/Info.plist');
-  if (!existsSync(plistPath)) return;
+  const iosDir = join(ROOT, 'ios');
+  if (!existsSync(iosDir)) return;
+  const plistPath = readdirSync(iosDir)
+    .map((entry) => join(iosDir, entry, 'Info.plist'))
+    .find((candidate) => existsSync(candidate));
+  if (plistPath === undefined) return;
   const plist = readFileSync(plistPath, 'utf8');
   const declared = /<key>UIUserInterfaceStyle<\/key>\s*<string>([^<]+)<\/string>/.exec(plist);
   assert.equal(declared?.[1], 'Light', 'Info.plist still follows the system appearance');

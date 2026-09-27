@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "HelloHack26",
+    "name": "iCup",
     "slug": "HelloHack26",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,8 +8,7 @@
     "scheme": "hellohack26",
     "userInterfaceStyle": "light",
     "ios": {
-      "bundleIdentifier": "com.alexliu.icup",
-      "icon": "./assets/icup.icon"
+      "bundleIdentifier": "com.alexliu.icup"
     },
     "android": {
       "adaptiveIcon": {
@@ -30,7 +29,7 @@
       [
         "@sfourdrinier/react-native-ble-plx",
         {
-          "bluetoothAlwaysPermission": "HelloHack26 uses Bluetooth to connect to your iCup water sensor."
+          "bluetoothAlwaysPermission": "iCup uses Bluetooth to connect to your water bottle."
         }
       ],
       [
