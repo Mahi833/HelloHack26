@@ -5,11 +5,14 @@ import { PermissionsAndroid, Platform } from 'react-native';
 export const ICUP_SERVICE_UUID = '7a1e0001-5c2b-4e3a-9f6d-2b8c0a4d1e01';
 export const ICUP_WEIGHT_UUID = '7a1e0002-5c2b-4e3a-9f6d-2b8c0a4d1e01';
 export const ICUP_TARE_UUID = '7a1e0003-5c2b-4e3a-9f6d-2b8c0a4d1e01';
+export const BATTERY_SERVICE_UUID = '0000180f-0000-1000-8000-00805f9b34fb';
+export const BATTERY_LEVEL_UUID = '00002a19-0000-1000-8000-00805f9b34fb';
 
 type IcupBleState = {
   isConnected: boolean;
   isWorking: boolean;
   latestWeightGrams: number | null;
+  batteryPercentage: number | null;
   message: string;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
@@ -18,6 +21,7 @@ type IcupBleState = {
 
 type BrowserGattCharacteristic = {
   value?: DataView | null;
+  readValue: () => Promise<DataView>;
   startNotifications: () => Promise<BrowserGattCharacteristic>;
   writeValue: (value: Uint8Array) => Promise<void>;
   addEventListener: (type: string, listener: (event: { target?: { value?: DataView | null } | null }) => void) => void;
@@ -41,7 +45,7 @@ type BrowserBluetoothDevice = {
 };
 
 type BrowserBluetooth = {
-  requestDevice: (options: { filters: { services: string[] }[] }) => Promise<BrowserBluetoothDevice>;
+  requestDevice: (options: { filters: { services: string[] }[]; optionalServices: string[] }) => Promise<BrowserBluetoothDevice>;
 };
 
 const IcupBleContext = createContext<IcupBleState | null>(null);
@@ -62,6 +66,13 @@ function decodeBase64Ascii(value: string) {
   return decoded;
 }
 
+function decodeBase64Byte(value: string) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const a = alphabet.indexOf(value[0] ?? 'A');
+  const b = alphabet.indexOf(value[1] ?? 'A');
+  return ((a << 2) | (b >> 4)) & 0xff;
+}
+
 async function requestBluetoothPermissions() {
   if (Platform.OS !== 'android') return true;
 
@@ -79,18 +90,22 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
   const deviceIdRef = useRef<string | null>(null);
   const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const valueSubscriptionRef = useRef<Subscription | null>(null);
+  const batterySubscriptionRef = useRef<Subscription | null>(null);
   const disconnectSubscriptionRef = useRef<Subscription | null>(null);
   const browserDeviceRef = useRef<BrowserBluetoothDevice | null>(null);
   const browserTareCharacteristicRef = useRef<BrowserGattCharacteristic | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [latestWeightGrams, setLatestWeightGrams] = useState<number | null>(null);
+  const [batteryPercentage, setBatteryPercentage] = useState<number | null>(null);
   const [message, setMessage] = useState('Connect to SipBase to read the live scale.');
 
   const clearSubscriptions = useCallback(() => {
     valueSubscriptionRef.current?.remove();
+    batterySubscriptionRef.current?.remove();
     disconnectSubscriptionRef.current?.remove();
     valueSubscriptionRef.current = null;
+    batterySubscriptionRef.current = null;
     disconnectSubscriptionRef.current = null;
   }, []);
 
@@ -122,10 +137,14 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
       }
       setIsWorking(true);
       setLatestWeightGrams(null);
+      setBatteryPercentage(null);
       setMessage('Choose SipBase in the browser device picker…');
       try {
         // requestDevice must be called from the Connect button gesture in the browser.
-        const device = await browserBluetooth.requestDevice({ filters: [{ services: [ICUP_SERVICE_UUID] }] });
+        const device = await browserBluetooth.requestDevice({
+          filters: [{ services: [ICUP_SERVICE_UUID] }],
+          optionalServices: [BATTERY_SERVICE_UUID],
+        });
         const server = await device.gatt?.connect();
         if (!server) throw new Error('Could not open the SipBase Bluetooth connection.');
         const service = await server.getPrimaryService(ICUP_SERVICE_UUID);
@@ -142,10 +161,28 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
           const grams = Number.parseFloat(textValue);
           if (Number.isFinite(grams)) setLatestWeightGrams(grams);
         });
+        try {
+          const batteryService = await server.getPrimaryService(BATTERY_SERVICE_UUID);
+          const batteryCharacteristic = await batteryService.getCharacteristic(BATTERY_LEVEL_UUID);
+          const batteryValue = await batteryCharacteristic.readValue();
+          setBatteryPercentage(Math.min(100, batteryValue.getUint8(0)));
+          try {
+            await batteryCharacteristic.startNotifications();
+            batteryCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
+              const value = event.target?.value;
+              if (value) setBatteryPercentage(Math.min(100, value.getUint8(0)));
+            });
+          } catch {
+            // Keep the one-time reading when the battery characteristic does not support notifications.
+          }
+        } catch {
+          setBatteryPercentage(null);
+        }
         device.addEventListener('gattserverdisconnected', () => {
           browserDeviceRef.current = null;
           browserTareCharacteristicRef.current = null;
           setIsConnected(false);
+          setBatteryPercentage(null);
           setIsWorking(false);
           setMessage('SipBase disconnected.');
         });
@@ -164,6 +201,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
     if (!manager || isWorking || isConnected) return;
     setIsWorking(true);
     setLatestWeightGrams(null);
+    setBatteryPercentage(null);
 
     try {
       const permitted = await requestBluetoothPermissions();
@@ -208,10 +246,36 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
                 if (Number.isFinite(grams)) setLatestWeightGrams(grams);
               },
             );
+            try {
+              const battery = await manager.readCharacteristicForDevice(
+                connectedDevice.id,
+                BATTERY_SERVICE_UUID,
+                BATTERY_LEVEL_UUID,
+              );
+              if (battery.value) setBatteryPercentage(Math.min(100, decodeBase64Byte(battery.value)));
+              try {
+                batterySubscriptionRef.current = manager.monitorCharacteristicForDevice(
+                  connectedDevice.id,
+                  BATTERY_SERVICE_UUID,
+                  BATTERY_LEVEL_UUID,
+                  (batteryError, characteristic) => {
+                    if (!batteryError && characteristic?.value) {
+                      setBatteryPercentage(Math.min(100, decodeBase64Byte(characteristic.value)));
+                    }
+                  },
+                );
+              } catch {
+                // Keep the one-time reading when the battery characteristic does not support notifications.
+              }
+            } catch {
+              // The scale can still connect when its firmware does not expose the standard battery service.
+              setBatteryPercentage(null);
+            }
             disconnectSubscriptionRef.current = manager.onDeviceDisconnected(connectedDevice.id, () => {
               clearSubscriptions();
               deviceIdRef.current = null;
               setIsConnected(false);
+              setBatteryPercentage(null);
               setIsWorking(false);
               setMessage('SipBase disconnected.');
             });
@@ -247,6 +311,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
       browserDeviceRef.current = null;
       browserTareCharacteristicRef.current = null;
       setIsConnected(false);
+      setBatteryPercentage(null);
       setIsWorking(false);
       setMessage('Disconnected from SipBase.');
       return;
@@ -261,6 +326,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
     deviceIdRef.current = null;
     if (deviceId) await manager.cancelDeviceConnection(deviceId).catch(() => undefined);
     setIsConnected(false);
+    setBatteryPercentage(null);
     setIsWorking(false);
     setMessage('Disconnected from SipBase.');
   }, [clearSubscriptions]);
@@ -294,7 +360,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
   }, [isConnected]);
 
   return (
-    <IcupBleContext.Provider value={{ isConnected, isWorking, latestWeightGrams, message, connect, disconnect, tare }}>
+    <IcupBleContext.Provider value={{ isConnected, isWorking, latestWeightGrams, batteryPercentage, message, connect, disconnect, tare }}>
       {children}
     </IcupBleContext.Provider>
   );

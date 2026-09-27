@@ -27,6 +27,9 @@ export default function HomeScreen() {
   const progress = dailyGoal > 0 ? Math.min(waterDrank / dailyGoal, 1) : 0;
   const remaining = Math.max(dailyGoal - waterDrank, 0);
   const bluetoothConnected = icupBle.isConnected || (__DEV__ && isICupConnected);
+  const shownBattery = icupBle.isConnected
+    ? icupBle.batteryPercentage
+    : (__DEV__ ? icupBattery : null);
 
   useEffect(() => {
     let mounted = true;
@@ -145,16 +148,16 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={`iCup battery ${icupBattery} percent`}>
+          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={`iCup battery ${shownBattery === null ? 'unavailable' : `${shownBattery} percent`}`}>
             <View style={styles.batteryIcon}>
               <View style={styles.batteryCap} />
               <View style={styles.batteryOutline}>
-                <View style={[styles.batteryFill, { width: `${icupBattery}%` }, icupBattery <= 20 && styles.batteryFillLow]} />
+                <View style={[styles.batteryFill, { width: `${shownBattery ?? 0}%` }, shownBattery !== null && shownBattery <= 20 && styles.batteryFillLow]} />
               </View>
             </View>
             <View>
               <Text style={styles.batteryLabel}>Battery</Text>
-              <Text style={styles.batteryValue}>{icupBattery}%</Text>
+              <Text style={styles.batteryValue}>{shownBattery === null ? '—' : `${shownBattery}%`}</Text>
             </View>
           </View>
         </View>
