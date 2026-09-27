@@ -31,6 +31,8 @@ asymmetric rather than simply small.
 | Glass | Local native module, not `expo-glass-effect` |
 | Glass extent | Cards and controls, not the orb |
 | Daily goal | Editable, behind the header gear |
+| Appearance | Pinned light, app-wide |
+| Type | SF Rounded on one eight-step scale |
 
 ## What the references gave us
 
@@ -136,6 +138,16 @@ with `of 3,000 ml` small beneath it. Below the orb, one muted line:
 The orb stays solid water. It does not become glass, so the hero still reads as
 liquid rather than as another panel.
 
+### Logging is automatic first
+
+Alex's framing: logging is automatic, off the weight sensor. Manual logging is
+the fallback, so it is no longer a row of four cards competing with the hero.
+
+`LogDrinkPanel` leads with a status card naming the automatic path in plain
+words, then a single `Log a drink by hand` control that folds down to reveal
+three presets and a custom option. Collapsed, manual logging costs one line of
+the screen. The presets log and re-collapse in one tap.
+
 ### Preset row
 
 Three chips in the thumb zone: `250 ml`, `500 ml`, `+` for a custom amount.
@@ -155,6 +167,24 @@ One line: `Next reminder 4:30pm` and the toggle.
 Three become two: Home and History, confirmed by Alex after seeing the build on
 the phone. Quick Add's serving cards become the preset row.
 
+## Appearance is pinned, not adaptive
+
+Alex reported the app flipping white to dark when moving from Home to History.
+The screens were never the cause: both hardcode `#F4FAFC`. The navigator was.
+`app.json` declared `userInterfaceStyle: "automatic"`, `Info.plist` declared
+`UIUserInterfaceStyle: Automatic`, `_layout.tsx` swapped in `DarkTheme` on a
+dark system, and `app-tabs.tsx` painted `Colors.dark.background`, which is
+`#000000`. The result was a light design wearing dark chrome.
+
+Every screen in this app is designed light and there is no dark palette to
+switch to, so the app now declares light in all four places. Two tests guard
+it: one asserts the two config files, one asserts that no native screen
+references `useColorScheme` or `DarkTheme`. Both were confirmed red against the
+original bug before the fix landed.
+
+A dark palette is a real feature and remains open. Declaring light is not that
+feature; it is the honest description of what the app actually is today.
+
 ## Glass
 
 Verified against the installed iOS 26.2 SDK rather than assumed:
@@ -171,6 +201,16 @@ today's background would be indistinguishable from a translucent white
 rectangle. The material therefore ships together with a background worth
 blurring: the orb's colour bleeding outward and soft blue shapes toward the
 screen edges. Neither half is worth doing alone.
+
+**What shipped is not this module.** The demo build approximates glass in pure
+React Native: translucent white surfaces over a `ScreenBackground` of soft blue
+shapes, shared by both screens, plus the real native material on the tab bar via
+expo-router's `blurEffect="systemThinMaterialLight"`. That last one is genuine
+`UIBlurEffect`; the cards are not. They are translucency over an ambient
+background, which reads as glass because the background gives them something to
+sit over, but it does not sample or blur what is behind it.
+
+The native module below remains the way to get real material on the cards.
 
 Built as `modules/icup-glass/`, a local autolinked package, following the
 pattern proven by `modules/icup-motion/`. This is a Fabric **view** component
@@ -235,10 +275,13 @@ app is backgrounded, so automatic logging never interrupts.
 ## What gets deleted
 
 - `src/app/quick-add.tsx` and its tab entry.
+- `src/components/quick-add-row.tsx`, replaced by `log-drink-panel.tsx`.
+- `src/components/last-drink-placeholder.tsx`. Its message became one muted
+  line inside the summary card rather than a card of its own on both screens.
 - The `bleControlCard` block in `src/app/index.tsx`, relocated into the device
   sheet.
 - Confirmed-unreferenced components: `external-link.tsx`, `hint-row.tsx`,
-  `web-badge.tsx`.
+  `web-badge.tsx`. All three are now deleted.
 - `themed-text.tsx` and `themed-view.tsx` are **not** unreferenced. An earlier
   draft of this spec said they were, which was wrong: `app-tabs.web.tsx` imports
   both. They die only if the web target dies, which is a separate decision.

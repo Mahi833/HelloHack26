@@ -1,6 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 
+import { Palette } from '@/constants/design';
 import type { WaterMotion } from '@/motion/use-water-tilt';
 
 const ORB_SIZE = 96;
@@ -50,9 +51,9 @@ const styles = StyleSheet.create({
     height: ORB_SIZE,
     borderRadius: ORB_SIZE / 2,
     overflow: 'hidden',
-    backgroundColor: '#C5E7F1',
-    borderWidth: 1,
-    borderColor: '#A9D6E3',
+    backgroundColor: Palette.waterSoft,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Palette.border,
   },
   pivot: { position: 'absolute', left: -ORB_SIZE, right: -ORB_SIZE, height: 0 },
   crest: {
@@ -62,7 +63,7 @@ const styles = StyleSheet.create({
     width: CREST_SIZE,
     height: CREST_SIZE,
     borderRadius: CREST_SIZE / 2,
-    backgroundColor: '#45A9C9',
+    backgroundColor: Palette.water,
   },
   body: {
     position: 'absolute',
@@ -70,6 +71,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: ORB_SIZE * 3,
-    backgroundColor: '#45A9C9',
+    backgroundColor: Palette.water,
   },
 });

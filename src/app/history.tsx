@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
+import { ScreenBackground } from '@/components/screen-background';
+import { ScreenHeader } from '@/components/screen-header';
+import { Palette, Radius, Space, Surface, Type } from '@/constants/design';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
 import { localDayKey } from '@/store/types';
 
@@ -34,7 +36,7 @@ const isDayKey = (value: string) =>
   DAY_KEY_PATTERN.test(value) && !Number.isNaN(dayKeyToDate(value).getTime());
 
 export default function HistoryScreen() {
-  const { ready, dailyGoalMl, lastDrinkAt, dayTotals, eventsSince } = useHydrationStore();
+  const { ready, dailyGoalMl, dayTotals, eventsSince } = useHydrationStore();
   const [range, setRange] = useState<Range>('Past week');
   const [rangeMenuOpen, setRangeMenuOpen] = useState(false);
   const [startText, setStartText] = useState(() => localDayKey(Date.now() - 6 * 86400000));
@@ -42,8 +44,6 @@ export default function HistoryScreen() {
 
   const now = useClock();
   const todayKey = localDayKey(now);
-  const minutesSinceDrink =
-    lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
 
   const visibleRecords = useMemo(() => {
     if (range === 'Custom range') {
@@ -79,158 +79,212 @@ export default function HistoryScreen() {
   const maxChartAmount = Math.max(dailyGoalMl, ...chartRecords.map((item) => item.amount));
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <LastDrinkPlaceholder minutesSinceDrink={minutesSinceDrink} />
+    <ScreenBackground>
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <ScreenHeader subtitle="Your intake" title="History" />
 
-        <View style={styles.filterWrap}>
-          <Pressable style={styles.rangeButton} onPress={() => setRangeMenuOpen((open) => !open)} accessibilityRole="button">
-            <Text style={styles.rangeButtonText}>{range}</Text>
-            <Text style={styles.chevron}>{rangeMenuOpen ? '⌃' : '⌄'}</Text>
-          </Pressable>
-          {rangeMenuOpen && (
-            <View style={styles.menu}>
-              {RANGES.map((option) => (
-                <Pressable key={option} onPress={() => { setRange(option); setRangeMenuOpen(false); }} style={styles.menuItem}>
-                  <Text style={[styles.menuText, range === option && styles.menuTextSelected]}>{option}</Text>
-                  {range === option && <Text style={styles.check}>✓</Text>}
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {range === 'Custom range' && (
-          <View style={styles.customRange}>
-            <View style={styles.dateField}>
-              <Text style={styles.dateLabel}>FROM</Text>
-              <TextInput value={startText} onChangeText={setStartText} placeholder="YYYY-MM-DD" style={styles.dateInput} accessibilityLabel="Start date, YYYY-MM-DD" />
-            </View>
-            <Text style={styles.dateSeparator}>–</Text>
-            <View style={styles.dateField}>
-              <Text style={styles.dateLabel}>TO</Text>
-              <TextInput value={endText} onChangeText={setEndText} placeholder="YYYY-MM-DD" style={styles.dateInput} accessibilityLabel="End date, YYYY-MM-DD" />
-            </View>
-          </View>
-        )}
-
-        <View style={styles.chartCard}>
-          <View style={styles.chartHeading}>
-            <View>
-              <Text style={styles.cardEyebrow}>DAILY AVERAGE</Text>
-              <Text style={styles.average}>{average.toLocaleString()} <Text style={styles.averageUnit}>ml</Text></Text>
-            </View>
-            <View style={styles.goalTag}><View style={styles.goalDot} /><Text style={styles.goalLabel}>{dailyGoalMl.toLocaleString()} ml goal</Text></View>
-          </View>
-
-          <View style={styles.chart}>
-            <View style={styles.gridLine} />
-            <View style={[styles.gridLine, styles.gridLineMiddle]} />
-            {chartRecords.length === 0 ? (
-              <Text style={styles.chartEmpty}>{ready ? 'No water logged in this range yet.' : 'Loading your saved drinks…'}</Text>
-            ) : (
-              <View style={styles.barRow}>
-                {chartRecords.map((item, index) => (
-                  <View key={`${item.label}-${index}`} style={styles.barColumn}>
-                    <View style={styles.barTrack}>
-                      <View style={[styles.bar, { height: `${Math.max(8, Math.min(item.amount / maxChartAmount, 1) * 100)}%` }, index === chartRecords.length - 1 && styles.barLatest]} />
-                    </View>
-                    <Text style={styles.barLabel}>{item.label}</Text>
-                  </View>
+          <View style={styles.filterWrap}>
+            <Pressable
+              style={({ pressed }) => [Surface.glassStrong, styles.rangeButton, pressed && styles.pressed]}
+              onPress={() => setRangeMenuOpen((open) => !open)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: rangeMenuOpen }}>
+              <Text style={styles.rangeButtonText}>{range}</Text>
+              <Text style={styles.chevron}>{rangeMenuOpen ? '‹' : '›'}</Text>
+            </Pressable>
+            {rangeMenuOpen && (
+              <View style={[Surface.glassStrong, styles.menu]}>
+                {RANGES.map((option) => (
+                  <Pressable
+                    key={option}
+                    onPress={() => {
+                      setRange(option);
+                      setRangeMenuOpen(false);
+                    }}
+                    style={styles.menuItem}>
+                    <Text style={[styles.menuText, range === option && styles.menuTextSelected]}>{option}</Text>
+                    {range === option && <Text style={styles.check}>{'✓'}</Text>}
+                  </Pressable>
                 ))}
               </View>
             )}
           </View>
-          <View style={styles.chartFootnote}>
-            <View style={styles.legend}><View style={styles.legendDot} /><Text style={styles.legendText}>Water intake</Text></View>
-            <Text style={styles.recordCount}>{visibleRecords.length} {visibleRecords.length === 1 ? 'record' : 'records'}</Text>
-          </View>
-        </View>
 
-        <View style={styles.listHeader}>
-          <Text style={styles.listTitle}>Daily records</Text>
-          <Text style={styles.listCaption}>{range === 'Custom range' ? `${startText} – ${endText}` : range}</Text>
-        </View>
-        <View style={styles.recordsCard}>
-          {visibleRecords.length === 0 ? (
-            <Text style={styles.emptyState}>{ready ? 'No records in this date range.' : 'Loading your saved drinks…'}</Text>
-          ) : visibleRecords.map(({ day, ml }, index) => (
-            <View key={day} style={[styles.recordRow, index === visibleRecords.length - 1 && styles.lastRecordRow]}>
-              <View style={styles.recordIcon}><Text style={styles.recordDrop}>●</Text></View>
-              <View style={styles.recordDetails}>
-                <Text style={styles.recordDay}>{day === todayKey ? 'Today' : formatDay(day, { weekday: 'long' })}</Text>
-                <Text style={styles.recordDate}>{formatDay(day, { month: 'short', day: 'numeric' })}</Text>
+          {range === 'Custom range' && (
+            <View style={styles.customRange}>
+              <View style={[Surface.glassStrong, styles.dateField]}>
+                <Text style={styles.dateLabel}>FROM</Text>
+                <TextInput
+                  value={startText}
+                  onChangeText={setStartText}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={Palette.inkFaint}
+                  style={styles.dateInput}
+                  accessibilityLabel="Start date, YYYY-MM-DD"
+                />
               </View>
-              <View style={styles.recordTotal}>
-                <Text style={styles.recordAmount}>{ml.toLocaleString()} ml</Text>
-                <Text style={styles.recordGoal}>{dailyGoalMl > 0 ? Math.round((ml / dailyGoalMl) * 100) : 0}% of goal</Text>
+              <Text style={styles.dateSeparator}>{'–'}</Text>
+              <View style={[Surface.glassStrong, styles.dateField]}>
+                <Text style={styles.dateLabel}>TO</Text>
+                <TextInput
+                  value={endText}
+                  onChangeText={setEndText}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={Palette.inkFaint}
+                  style={styles.dateInput}
+                  accessibilityLabel="End date, YYYY-MM-DD"
+                />
               </View>
             </View>
-          ))}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+          )}
+
+          <View style={[Surface.glass, styles.chartCard]}>
+            <View style={styles.chartHeading}>
+              <View>
+                <Text style={styles.cardEyebrow}>DAILY AVERAGE</Text>
+                <Text style={styles.average}>
+                  {average.toLocaleString()} <Text style={styles.averageUnit}>ml</Text>
+                </Text>
+              </View>
+              <View style={[Surface.glassTint, styles.goalTag]}>
+                <View style={styles.goalDot} />
+                <Text style={styles.goalLabel}>{dailyGoalMl.toLocaleString()} ml goal</Text>
+              </View>
+            </View>
+
+            <View style={styles.chart}>
+              <View style={styles.gridLine} />
+              <View style={[styles.gridLine, styles.gridLineMiddle]} />
+              {chartRecords.length === 0 ? (
+                <Text style={styles.chartEmpty}>
+                  {ready ? 'No water logged in this range yet.' : 'Loading your saved drinks'}
+                </Text>
+              ) : (
+                <View style={styles.barRow}>
+                  {chartRecords.map((item, index) => (
+                    <View key={`${item.label}-${index}`} style={styles.barColumn}>
+                      <View style={styles.barTrack}>
+                        <View
+                          style={[
+                            styles.bar,
+                            { height: `${Math.max(8, Math.min(item.amount / maxChartAmount, 1) * 100)}%` },
+                            index === chartRecords.length - 1 && styles.barLatest,
+                          ]}
+                        />
+                      </View>
+                      <Text style={styles.barLabel}>{item.label}</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+            <View style={styles.chartFootnote}>
+              <View style={styles.legend}>
+                <View style={styles.legendDot} />
+                <Text style={styles.legendText}>Water intake</Text>
+              </View>
+              <Text style={styles.recordCount}>
+                {visibleRecords.length} {visibleRecords.length === 1 ? 'record' : 'records'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.listHeader}>
+            <Text style={styles.listTitle}>Daily records</Text>
+            <Text style={styles.listCaption}>
+              {range === 'Custom range' ? `${startText} to ${endText}` : range}
+            </Text>
+          </View>
+          <View style={[Surface.glass, styles.recordsCard]}>
+            {visibleRecords.length === 0 ? (
+              <Text style={styles.emptyState}>
+                {ready ? 'No records in this date range.' : 'Loading your saved drinks'}
+              </Text>
+            ) : (
+              visibleRecords.map(({ day, ml }, index) => (
+                <View
+                  key={day}
+                  style={[styles.recordRow, index === visibleRecords.length - 1 && styles.lastRecordRow]}>
+                  <View style={styles.recordIcon}>
+                    <View style={styles.recordDrop} />
+                  </View>
+                  <View style={styles.recordDetails}>
+                    <Text style={styles.recordDay}>
+                      {day === todayKey ? 'Today' : formatDay(day, { weekday: 'long' })}
+                    </Text>
+                    <Text style={styles.recordDate}>{formatDay(day, { month: 'short', day: 'numeric' })}</Text>
+                  </View>
+                  <View style={styles.recordTotal}>
+                    <Text style={styles.recordAmount}>{ml.toLocaleString()} ml</Text>
+                    <Text style={styles.recordGoal}>
+                      {dailyGoalMl > 0 ? Math.round((ml / dailyGoalMl) * 100) : 0}% of goal
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F4FAFC' },
-  content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 36, maxWidth: 560, width: '100%', alignSelf: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 23 },
-  eyebrow: { color: '#7D9EAD', fontSize: 10, letterSpacing: 1.4, fontWeight: '700' },
-  title: { color: '#163D52', fontSize: 30, lineHeight: 37, fontWeight: '700', marginTop: 4, letterSpacing: -0.8 },
-  headerIcon: { width: 43, height: 43, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#E2F3F8' },
-  headerIconText: { fontSize: 22, color: '#4BA5C0' },
-  filterWrap: { zIndex: 2, alignSelf: 'flex-start', marginBottom: 16 },
-  rangeButton: { minWidth: 150, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 15, height: 43, borderRadius: 14, backgroundColor: '#FFFFFF', borderColor: '#BBD6DE', borderWidth: 1 },
-  rangeButtonText: { color: '#326277', fontSize: 13, fontWeight: '600' },
-  chevron: { color: '#76A9B8', fontSize: 17, marginLeft: 15, marginTop: -3 },
-  menu: { position: 'absolute', top: 49, left: 0, width: 190, padding: 6, borderRadius: 16, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#BBD6DE', shadowColor: '#386678', shadowOpacity: 0.12, shadowRadius: 14, shadowOffset: { width: 0, height: 7 }, elevation: 6 },
-  menuItem: { minHeight: 42, paddingHorizontal: 10, borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  menuText: { color: '#668793', fontSize: 13 },
-  menuTextSelected: { color: '#287E9B', fontWeight: '700' },
-  check: { color: '#44A6C3', fontWeight: '700' },
-  customRange: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: -3, marginBottom: 16 },
-  dateField: { flex: 1, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 13, backgroundColor: '#FFFFFF', borderColor: '#BBD6DE', borderWidth: 1 },
-  dateLabel: { color: '#8EABB5', fontSize: 9, letterSpacing: 1, fontWeight: '700', marginBottom: 5 },
-  dateInput: { color: '#326277', fontSize: 12, padding: 0, minHeight: 18 },
-  dateSeparator: { color: '#8EABB5' },
-  chartCard: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, borderWidth: 1, borderColor: '#C2DAE1' },
+  safeArea: { flex: 1 },
+  content: { paddingHorizontal: Space.xl, paddingTop: Space.lg, paddingBottom: 36, maxWidth: 560, width: '100%', alignSelf: 'center' },
+  pressed: { opacity: 0.75 },
+  filterWrap: { zIndex: 2, alignSelf: 'flex-start', marginBottom: Space.lg },
+  rangeButton: { minWidth: 160, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Space.lg, height: 44, borderRadius: Radius.medium },
+  rangeButtonText: { ...Type.callout, color: Palette.inkSoft },
+  chevron: { ...Type.callout, color: Palette.accent, marginLeft: Space.md, transform: [{ rotate: '90deg' }] },
+  menu: { position: 'absolute', top: 50, left: 0, width: 196, padding: 6, borderRadius: Radius.medium },
+  menuItem: { minHeight: 42, paddingHorizontal: Space.md, borderRadius: Radius.small, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  menuText: { ...Type.callout, color: Palette.inkMuted, fontWeight: '500' },
+  menuTextSelected: { color: Palette.accent, fontWeight: '700' },
+  check: { ...Type.callout, color: Palette.water, fontWeight: '700' },
+  customRange: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, marginBottom: Space.lg },
+  dateField: { flex: 1, paddingHorizontal: Space.md, paddingVertical: Space.sm, borderRadius: Radius.small },
+  dateLabel: { ...Type.eyebrow, fontSize: 9, color: Palette.inkFaint, marginBottom: 4 },
+  dateInput: { ...Type.caption, color: Palette.inkSoft, padding: 0, minHeight: 18 },
+  dateSeparator: { ...Type.caption, color: Palette.inkFaint },
+  chartCard: { padding: Space.xl },
   chartHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  cardEyebrow: { color: '#85A5B0', fontSize: 9, letterSpacing: 1.3, fontWeight: '700' },
-  average: { color: '#1D526A', fontSize: 28, fontWeight: '700', marginTop: 5, letterSpacing: -0.6 },
-  averageUnit: { color: '#81A6B2', fontSize: 13, fontWeight: '500' },
-  goalTag: { flexDirection: 'row', alignItems: 'center', borderRadius: 10, paddingHorizontal: 9, paddingVertical: 7, backgroundColor: '#F0F8FA', borderWidth: 1, borderColor: '#C7DDE3' },
-  goalDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#9CCBD8', marginRight: 6 },
-  goalLabel: { color: '#7495A1', fontSize: 10, fontWeight: '600' },
-  chart: { height: 174, marginTop: 19, position: 'relative', justifyContent: 'flex-end' },
-  chartEmpty: { height: 150, paddingTop: 62, textAlign: 'center', color: '#91AAB4', fontSize: 13 },
-  gridLine: { position: 'absolute', left: 0, right: 0, top: 24, height: 1, backgroundColor: '#EFF5F7' },
+  cardEyebrow: { ...Type.eyebrow, fontSize: 9, color: Palette.inkFaint },
+  average: { ...Type.title, color: Palette.waterDeep, marginTop: Space.xs },
+  averageUnit: { ...Type.callout, color: Palette.inkMuted },
+  goalTag: { flexDirection: 'row', alignItems: 'center', borderRadius: Radius.small, paddingHorizontal: Space.sm, paddingVertical: 7 },
+  goalDot: { width: 7, height: 7, borderRadius: Radius.pill, backgroundColor: Palette.water, marginRight: 6 },
+  goalLabel: { ...Type.caption, color: Palette.inkSoft, fontWeight: '600' },
+  chart: { height: 174, marginTop: Space.xl, position: 'relative', justifyContent: 'flex-end' },
+  chartEmpty: { ...Type.callout, height: 150, paddingTop: 62, textAlign: 'center', color: Palette.inkFaint },
+  gridLine: { position: 'absolute', left: 0, right: 0, top: 24, height: StyleSheet.hairlineWidth, backgroundColor: Palette.border },
   gridLineMiddle: { top: 91 },
   barRow: { height: 150, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
   barColumn: { flex: 1, alignItems: 'center', height: '100%', justifyContent: 'flex-end' },
-  barTrack: { width: 22, height: 120, justifyContent: 'flex-end', overflow: 'hidden', borderRadius: 8, backgroundColor: '#F1F8FA', borderWidth: 1, borderColor: '#D5E6EB' },
-  bar: { width: '100%', borderRadius: 8, backgroundColor: '#A9DCE8' },
-  barLatest: { backgroundColor: '#48A8C5' },
-  barLabel: { color: '#91AAB4', fontSize: 9, marginTop: 8 },
-  chartFootnote: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 },
+  barTrack: { width: 22, height: 120, justifyContent: 'flex-end', overflow: 'hidden', borderRadius: Radius.small, backgroundColor: 'rgba(255, 255, 255, 0.55)' },
+  bar: { width: '100%', borderRadius: Radius.small, backgroundColor: Palette.waterSoft },
+  barLatest: { backgroundColor: Palette.water },
+  barLabel: { ...Type.caption, fontSize: 9, color: Palette.inkFaint, marginTop: Space.sm },
+  chartFootnote: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Space.md },
   legend: { flexDirection: 'row', alignItems: 'center' },
-  legendDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#48A8C5', marginRight: 7 },
-  legendText: { color: '#829FAA', fontSize: 10 },
-  recordCount: { color: '#9BB0B8', fontSize: 10 },
-  listHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 27, marginBottom: 12 },
-  listTitle: { color: '#183F53', fontSize: 19, fontWeight: '700' },
-  listCaption: { color: '#91AAB4', fontSize: 10 },
-  recordsCard: { paddingHorizontal: 15, borderRadius: 22, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#C2DAE1' },
-  recordRow: { minHeight: 70, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F0F5F7' },
+  legendDot: { width: 8, height: 8, borderRadius: Radius.pill, backgroundColor: Palette.water, marginRight: 7 },
+  legendText: { ...Type.caption, color: Palette.inkMuted },
+  recordCount: { ...Type.caption, color: Palette.inkFaint },
+  listHeader: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: Space.xxl, marginBottom: Space.md },
+  listTitle: { ...Type.heading, color: Palette.ink },
+  listCaption: { ...Type.caption, color: Palette.inkFaint },
+  recordsCard: { paddingHorizontal: Space.lg },
+  recordRow: { minHeight: 70, flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Palette.border },
   lastRecordRow: { borderBottomWidth: 0 },
-  recordIcon: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EDF8FA', borderWidth: 1, borderColor: '#C4DFE6' },
-  recordDrop: { color: '#55ABC4', fontSize: 12 },
-  recordDetails: { flex: 1, marginLeft: 11 },
-  recordDay: { color: '#355D6E', fontSize: 13, fontWeight: '600' },
-  recordDate: { color: '#9BB0B8', fontSize: 10, marginTop: 4 },
+  recordIcon: { width: 36, height: 36, borderRadius: Radius.small, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255, 255, 255, 0.7)' },
+  recordDrop: { width: 10, height: 10, borderRadius: Radius.pill, backgroundColor: Palette.water },
+  recordDetails: { flex: 1, marginLeft: Space.md },
+  recordDay: { ...Type.callout, color: Palette.inkSoft },
+  recordDate: { ...Type.caption, color: Palette.inkFaint, marginTop: 3 },
   recordTotal: { alignItems: 'flex-end' },
-  recordAmount: { color: '#326277', fontSize: 13, fontWeight: '700' },
-  recordGoal: { color: '#91AAB4', fontSize: 10, marginTop: 4 },
-  emptyState: { textAlign: 'center', color: '#91AAB4', paddingVertical: 25, fontSize: 13 },
+  recordAmount: { ...Type.callout, color: Palette.waterDeep, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  recordGoal: { ...Type.caption, color: Palette.inkFaint, marginTop: 3 },
+  emptyState: { ...Type.callout, textAlign: 'center', color: Palette.inkFaint, paddingVertical: 25 },
 });

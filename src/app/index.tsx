@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
-import { QuickAddRow } from '@/components/quick-add-row';
+import { LogDrinkPanel } from '@/components/log-drink-panel';
+import { ScreenBackground } from '@/components/screen-background';
+import { ScreenHeader } from '@/components/screen-header';
+import { REMINDER_CHOICES, SettingsSheet } from '@/components/settings-sheet';
 import { WaterOrb } from '@/components/water-orb';
+import { Palette, Radius, Space, Surface, Type } from '@/constants/design';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
 import { createSimulatedWeightSource, useIcup, useIcupSips } from '@/ble/use-icup';
 import { useIcupBle } from '@/contexts/icup-ble-context';
@@ -13,11 +16,24 @@ import { useHealthReminders } from '@/health/use-health-reminders';
 import { useLogDrink } from '@/hooks/use-log-drink';
 import { useWaterTilt } from '@/motion/use-water-tilt';
 
-const GOAL_STEP_ML = 250;
-const MIN_GOAL_ML = 250;
+const DEV_DRINK_ML = 250;
 
 const describeClock = (at: number): string =>
   new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+const describeDate = (at: number): string =>
+  new Date(at).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+
+const describeFrequency = (minutes: number): string =>
+  REMINDER_CHOICES.find((choice) => choice.minutes === minutes)?.label ?? `Every ${minutes} min`;
+
+const describeElapsed = (minutes: number): string => {
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours}h ago` : `${hours}h ${rest}m ago`;
+};
 
 const describeWorkout = (workout: WorkoutSummary | null): string => {
   if (workout === null) return 'no workout found';
@@ -25,12 +41,23 @@ const describeWorkout = (workout: WorkoutSummary | null): string => {
   return `${workout.intensity}, ${workout.durationMinutes} min${energy} at ${describeClock(workout.endedAt)}`;
 };
 
+const cancelSipReminders = async () => {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(
+    scheduled
+      .filter((item) => item.content.data?.kind === 'sip-reminder')
+      .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)),
+  );
+};
+
 export default function HomeScreen() {
   const [devPanelOpen, setDevPanelOpen] = useState(false);
   const [simulatedCup, setSimulatedCup] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sipRemindersEnabled, setSipRemindersEnabled] = useState(false);
+  const [reminderMinutes, setReminderMinutes] = useState<number>(REMINDER_CHOICES[0].minutes);
   const [reminderBusy, setReminderBusy] = useState(false);
-  const [reminderMessage, setReminderMessage] = useState('Get a gentle reminder every 2 minutes.');
+  const [reminderMessage, setReminderMessage] = useState('Reminders are off.');
 
   const { ready, todayMl, dailyGoalMl, lastDrinkAt, setDailyGoal } = useHydrationStore();
   const logDrink = useLogDrink();
@@ -47,6 +74,7 @@ export default function HomeScreen() {
   });
   const health = useHealthReminders({ lastDrinkAt, todayMl, addDrink: logDrink });
 
+  const cupConnected = simulatedCup || icupBle.isConnected;
   const cupWeightG = simulatedCup ? simulated.weightG : icupBle.latestWeightGrams;
   const cupError = simulatedCup ? simulated.error : liveSipError;
 
@@ -58,65 +86,72 @@ export default function HomeScreen() {
     let mounted = true;
     Notifications.getAllScheduledNotificationsAsync()
       .then((scheduled) => {
-        const enabled = scheduled.some((item) => item.content.data?.kind === 'sip-reminder');
-        if (mounted) setSipRemindersEnabled(enabled);
+        const existing = scheduled.find((item) => item.content.data?.kind === 'sip-reminder');
+        if (!mounted) return;
+        setSipRemindersEnabled(existing !== undefined);
+        if (existing !== undefined) setReminderMessage('Reminders are on.');
       })
       .catch(() => {
         if (mounted) setReminderMessage('Notifications are unavailable on this device.');
       });
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
-  const setSipReminders = async (enabled: boolean) => {
+  const applySipReminders = async (enabled: boolean, minutes: number) => {
     if (reminderBusy) return;
     setReminderBusy(true);
     try {
-      if (enabled) {
-        if (Platform.OS === 'android') {
-          await Notifications.setNotificationChannelAsync('sip-reminders', {
-            name: 'Sip reminders',
-            importance: Notifications.AndroidImportance.DEFAULT,
-          });
-        }
-        let permission = await Notifications.getPermissionsAsync();
-        if (!permission.granted) permission = await Notifications.requestPermissionsAsync();
-        if (!permission.granted) {
-          setSipRemindersEnabled(false);
-          setReminderMessage('Allow notifications in Settings to turn on sip reminders.');
-          return;
-        }
-        const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-        await Promise.all(scheduled
-          .filter((item) => item.content.data?.kind === 'sip-reminder')
-          .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)));
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Time for a sip!',
-            body: 'Take a moment to drink some water.',
-            data: { kind: 'sip-reminder' },
-          },
-          trigger: {
-            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
-            seconds: 120,
-            repeats: true,
-            ...(Platform.OS === 'android' ? { channelId: 'sip-reminders' } : {}),
-          },
-        });
-        setSipRemindersEnabled(true);
-        setReminderMessage('You will get "Time for a sip!" every 2 minutes.');
-      } else {
-        const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-        await Promise.all(scheduled
-          .filter((item) => item.content.data?.kind === 'sip-reminder')
-          .map((item) => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+      await cancelSipReminders();
+      if (!enabled) {
         setSipRemindersEnabled(false);
-        setReminderMessage('Sip reminders are off.');
+        setReminderMessage('Reminders are off.');
+        return;
       }
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('sip-reminders', {
+          name: 'Sip reminders',
+          importance: Notifications.AndroidImportance.DEFAULT,
+        });
+      }
+      let permission = await Notifications.getPermissionsAsync();
+      if (!permission.granted) permission = await Notifications.requestPermissionsAsync();
+      if (!permission.granted) {
+        setSipRemindersEnabled(false);
+        setReminderMessage('Allow notifications in Settings to turn on reminders.');
+        return;
+      }
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: 'Time for a sip!',
+          body: 'Take a moment to drink some water.',
+          sound: 'default',
+          data: { kind: 'sip-reminder' },
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: minutes * 60,
+          repeats: true,
+          ...(Platform.OS === 'android' ? { channelId: 'sip-reminders' } : {}),
+        },
+      });
+      setSipRemindersEnabled(true);
+      setReminderMessage(`${describeFrequency(minutes)}, starting now.`);
     } catch {
-      setReminderMessage('Could not update reminders. Please try again.');
       setSipRemindersEnabled(false);
+      setReminderMessage('Could not update reminders. Please try again.');
     } finally {
       setReminderBusy(false);
+    }
+  };
+
+  const changeReminderMinutes = (minutes: number) => {
+    setReminderMinutes(minutes);
+    if (sipRemindersEnabled) {
+      void applySipReminders(true, minutes);
+    } else {
+      setReminderMessage(`${describeFrequency(minutes)} once you turn reminders on.`);
     }
   };
 
@@ -124,251 +159,179 @@ export default function HomeScreen() {
     logDrink(ml, 'manual').catch((error: unknown) => console.warn('Could not save that drink', error));
   };
 
-  const nudgeGoal = (delta: number) => {
-    setDailyGoal(Math.max(MIN_GOAL_ML, dailyGoalMl + delta)).catch((error: unknown) =>
-      console.warn('Could not save that goal', error),
-    );
-  };
-
-  const logServing = (amountMl: number) => {
-    logDrink(amountMl, 'manual').catch((error: unknown) =>
-      console.warn('Could not save that drink', error),
-    );
+  const changeGoal = (ml: number) => {
+    setDailyGoal(ml).catch((error: unknown) => console.warn('Could not save that goal', error));
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <LastDrinkPlaceholder minutesSinceDrink={minutesSinceDrink} />
+    <ScreenBackground>
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <ScreenHeader
+            subtitle={describeDate(now)}
+            title="Today"
+            status={{ connected: cupConnected, label: cupConnected ? 'Cup on' : 'No cup' }}
+            onPressSettings={() => setSettingsOpen(true)}
+          />
 
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryTop}>
-            <View>
-              <Text style={styles.cardTitle}>TODAY&apos;S PROGRESS</Text>
-            </View>
-            <WaterOrb progress={progress} motion={waterMotion} />
-          </View>
-
-          <View style={styles.fractionRow}>
-            <Text style={styles.drunk}>{todayMl.toLocaleString()}</Text>
-            <Text style={styles.slash}>/</Text>
-            <Text style={styles.goal}>{dailyGoalMl.toLocaleString()}</Text>
-            <Text style={styles.unit}>ml</Text>
-          </View>
-          <Text style={styles.caption}>drank <Text style={styles.captionDot}>·</Text> daily goal</Text>
-
-          <View style={styles.progressTrack} accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
-            <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-          </View>
-          <View style={styles.progressLabels}>
-            <Text style={styles.progressPercent}>{Math.round(progress * 100)}% of your goal</Text>
-            <Text style={styles.remaining}>
-              {!ready ? 'Loading your saved drinks' : remaining === 0 ? 'Goal reached!' : `${remaining.toLocaleString()} ml to go`}
-            </Text>
-          </View>
-        </View>
-
-        <QuickAddRow onAdd={logServing} />
-
-        <View style={styles.bleControlCard}>
-          <View style={styles.bleControlCopy}>
-            <Text style={styles.bleControlTitle}>
-              {cupWeightG === null ? 'iCup live scale' : `${cupWeightG.toFixed(1)} g`}
-            </Text>
-            <Text style={styles.bleControlMessage}>
-              {simulatedCup ? 'Simulated cup is driving sips. Turn it off in developer controls.' : icupBle.message}
-            </Text>
-          </View>
-          <View style={styles.bleControlActions}>
-            {icupBle.isConnected && !simulatedCup && (
-              <Pressable accessibilityRole="button" onPress={() => void icupBle.tare()} style={styles.tareButton}>
-                <Text style={styles.tareButtonText}>Tare</Text>
-              </Pressable>
-            )}
-            <Pressable
-              accessibilityRole="button"
-              disabled={icupBle.isWorking || simulatedCup}
-              onPress={() => void (icupBle.isConnected ? icupBle.disconnect() : icupBle.connect())}
-              style={[styles.bleConnectButton, icupBle.isConnected && styles.bleDisconnectButton, (icupBle.isWorking || simulatedCup) && styles.bleButtonDisabled]}>
-              {icupBle.isWorking ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.bleConnectButtonText}>{icupBle.isConnected ? 'Disconnect' : 'Connect'}</Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.reminderCard}>
-          <View style={styles.reminderCopy}>
-            <Text style={styles.reminderTitle}>Sip reminders</Text>
-            <Text style={styles.reminderDescription}>{reminderMessage}</Text>
-          </View>
-          {reminderBusy ? (
-            <ActivityIndicator color="#3188A8" />
-          ) : (
-            <Switch
-              accessibilityLabel="Sip reminders every 2 minutes"
-              value={sipRemindersEnabled}
-              onValueChange={setSipReminders}
-              trackColor={{ false: '#C5D5DB', true: '#8AC7A1' }}
-              thumbColor="#FFFFFF"
-            />
-          )}
-        </View>
-
-        {__DEV__ && (
-          <View style={styles.devPanel}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ expanded: devPanelOpen }}
-              onPress={() => setDevPanelOpen((open) => !open)}
-              style={styles.devPanelHeader}>
-              <Text style={styles.devBadge}>DEV</Text>
-              <Text style={styles.devPanelTitle}>Developer controls</Text>
-              <Text style={styles.devChevron}>{devPanelOpen ? '−' : '+'}</Text>
-            </Pressable>
-            {devPanelOpen && (
-              <View style={styles.devPanelContent}>
-                <View style={styles.devBluetoothRow}>
-                  <Text style={styles.devLabel}>Simulated cup</Text>
-                  <Pressable
-                    accessibilityRole="switch"
-                    accessibilityState={{ checked: simulatedCup }}
-                    onPress={() => setSimulatedCup((value) => !value)}
-                    style={[styles.devToggle, simulatedCup && styles.devToggleOn]}>
-                    <Text style={styles.devToggleText}>{simulatedCup ? 'Driving sips' : 'Real cup'}</Text>
-                  </Pressable>
+          <View style={[Surface.glass, styles.summaryCard]}>
+            <View style={styles.summaryTop}>
+              <View style={styles.summaryCopy}>
+                <Text style={styles.eyebrow}>TODAY&apos;S PROGRESS</Text>
+                <View style={styles.fractionRow}>
+                  <Text style={styles.drunk}>{todayMl.toLocaleString()}</Text>
+                  <Text style={styles.goal}>/ {dailyGoalMl.toLocaleString()} ml</Text>
                 </View>
-                <DevControlRow
-                  label="Log a drink"
-                  value={todayMl}
-                  unit="ml today"
-                  onDecrease={() => logManualDrink(GOAL_STEP_ML)}
-                  onIncrease={() => logManualDrink(GOAL_STEP_ML)}
-                />
-                <DevControlRow
-                  label="Daily water goal"
-                  value={dailyGoalMl}
-                  unit="ml"
-                  onDecrease={() => nudgeGoal(-GOAL_STEP_ML)}
-                  onIncrease={() => nudgeGoal(GOAL_STEP_ML)}
-                />
-                <View style={styles.devRow}>
-                  <Text style={styles.devLabel}>Live weight</Text>
-                  <Text style={styles.devValue}>{cupWeightG === null ? 'no reading' : `${cupWeightG.toFixed(1)} g`}</Text>
-                </View>
-                <View style={styles.devRow}>
-                  <Text style={styles.devLabel}>Apple Health</Text>
-                  <Text style={styles.devValue}>{health.healthAuthorized ? 'authorized' : 'not authorized'}</Text>
-                </View>
-                <View style={styles.devRow}>
-                  <Text style={styles.devLabel}>Health last read</Text>
-                  <Text style={styles.devValue}>{health.lastCheckedAt === null ? 'never' : describeClock(health.lastCheckedAt)}</Text>
-                </View>
-                <View style={styles.devRow}>
-                  <Text style={styles.devLabel}>Last workout</Text>
-                  <Text style={styles.devValue}>{describeWorkout(health.lastWorkout)}</Text>
-                </View>
-                <View style={styles.devRow}>
-                  <Text style={styles.devLabel}>Woke up</Text>
-                  <Text style={styles.devValue}>{health.lastSleep === null ? 'no sleep data' : describeClock(health.lastSleep.wokeAt)}</Text>
-                </View>
-                <View style={styles.devRow}>
-                  <Text style={styles.devLabel}>Last health nudge</Text>
-                  <Text style={styles.devValue}>{health.lastNudge === null ? 'none yet' : health.lastNudge.kind}</Text>
-                </View>
-                {cupError !== null && (
-                  <View style={styles.devRow}>
-                    <Text style={styles.devLabel}>Bluetooth error</Text>
-                    <Text style={styles.devValue}>{cupError}</Text>
-                  </View>
-                )}
               </View>
-            )}
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
-  );
-}
+              <WaterOrb progress={progress} motion={waterMotion} />
+            </View>
 
-function DevControlRow({
-  label,
-  value,
-  unit,
-  onDecrease,
-  onIncrease,
-}: {
-  label: string;
-  value: number;
-  unit: string;
-  onDecrease: () => void;
-  onIncrease: () => void;
-}) {
-  return (
-    <View style={styles.devRow}>
-      <Text style={styles.devLabel}>{label}</Text>
-      <View style={styles.devValueControls}>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Decrease ${label}`} onPress={onDecrease} style={styles.devStepButton}>
-          <Text style={styles.devStepText}>−</Text>
-        </Pressable>
-        <Text style={styles.devValue}>{value.toLocaleString()} {unit}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Increase ${label}`} onPress={onIncrease} style={styles.devStepButton}>
-          <Text style={styles.devStepText}>+</Text>
-        </Pressable>
-      </View>
-    </View>
+            <View
+              style={styles.progressTrack}
+              accessibilityRole="progressbar"
+              accessibilityValue={{ min: 0, max: 100, now: Math.round(progress * 100) }}>
+              <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
+            </View>
+            <View style={styles.progressLabels}>
+              <Text style={styles.progressPercent}>{Math.round(progress * 100)}% of your goal</Text>
+              <Text style={styles.remaining}>
+                {!ready
+                  ? 'Loading your saved drinks'
+                  : remaining === 0
+                    ? 'Goal reached!'
+                    : `${remaining.toLocaleString()} ml to go`}
+              </Text>
+            </View>
+            <Text style={styles.lastDrink}>
+              {minutesSinceDrink === null ? 'No water logged yet' : `Last drink ${describeElapsed(minutesSinceDrink)}`}
+            </Text>
+          </View>
+
+          <LogDrinkPanel onAdd={logManualDrink} cupConnected={cupConnected} cupWeightG={cupWeightG} />
+
+          {__DEV__ && (
+            <View style={[Surface.glassTint, styles.devPanel]}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: devPanelOpen }}
+                onPress={() => setDevPanelOpen((open) => !open)}
+                style={styles.devPanelHeader}>
+                <Text style={styles.devBadge}>DEV</Text>
+                <Text style={styles.devPanelTitle}>Developer controls</Text>
+                <Text style={styles.devChevron}>{devPanelOpen ? '–' : '+'}</Text>
+              </Pressable>
+              {devPanelOpen && (
+                <View style={styles.devPanelContent}>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Simulated cup</Text>
+                    <Pressable
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: simulatedCup }}
+                      onPress={() => setSimulatedCup((value) => !value)}
+                      style={[styles.devToggle, simulatedCup && styles.devToggleOn]}>
+                      <Text style={styles.devToggleText}>{simulatedCup ? 'Driving sips' : 'Real cup'}</Text>
+                    </Pressable>
+                  </View>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Log a drink</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Log ${DEV_DRINK_ML} millilitres`}
+                      onPress={() => logManualDrink(DEV_DRINK_ML)}
+                      style={styles.devToggle}>
+                      <Text style={styles.devToggleText}>Add {DEV_DRINK_ML} ml</Text>
+                    </Pressable>
+                  </View>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Live weight</Text>
+                    <Text style={styles.devValue}>{cupWeightG === null ? 'no reading' : `${cupWeightG.toFixed(1)} g`}</Text>
+                  </View>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Apple Health</Text>
+                    <Text style={styles.devValue}>{health.healthAuthorized ? 'authorized' : 'not authorized'}</Text>
+                  </View>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Health last read</Text>
+                    <Text style={styles.devValue}>
+                      {health.lastCheckedAt === null ? 'never' : describeClock(health.lastCheckedAt)}
+                    </Text>
+                  </View>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Last workout</Text>
+                    <Text style={styles.devValue}>{describeWorkout(health.lastWorkout)}</Text>
+                  </View>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Woke up</Text>
+                    <Text style={styles.devValue}>
+                      {health.lastSleep === null ? 'no sleep data' : describeClock(health.lastSleep.wokeAt)}
+                    </Text>
+                  </View>
+                  <View style={styles.devRow}>
+                    <Text style={styles.devLabel}>Last health nudge</Text>
+                    <Text style={styles.devValue}>{health.lastNudge === null ? 'none yet' : health.lastNudge.kind}</Text>
+                  </View>
+                  {cupError !== null && (
+                    <View style={styles.devRow}>
+                      <Text style={styles.devLabel}>Bluetooth error</Text>
+                      <Text style={styles.devValue}>{cupError}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+        </ScrollView>
+
+        <SettingsSheet
+          visible={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          dailyGoalMl={dailyGoalMl}
+          onChangeGoal={changeGoal}
+          remindersEnabled={sipRemindersEnabled}
+          onToggleReminders={(enabled) => void applySipReminders(enabled, reminderMinutes)}
+          reminderMinutes={reminderMinutes}
+          onChangeReminderMinutes={changeReminderMinutes}
+          reminderMessage={reminderMessage}
+          reminderBusy={reminderBusy}
+          cupConnected={icupBle.isConnected}
+          cupBusy={icupBle.isWorking || simulatedCup}
+          cupMessage={simulatedCup ? 'Simulated cup is driving sips. Turn it off in developer controls.' : icupBle.message}
+          cupWeightG={cupWeightG}
+          onConnect={() => void icupBle.connect()}
+          onDisconnect={() => void icupBle.disconnect()}
+          onTare={() => void icupBle.tare()}
+        />
+      </SafeAreaView>
+    </ScreenBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F4FAFC' },
-  content: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 38, maxWidth: 560, width: '100%', alignSelf: 'center' },
-  summaryCard: { borderRadius: 28, backgroundColor: '#DDF3FA', padding: 24, overflow: 'hidden', borderWidth: 1, borderColor: '#B9DEE9' },
-  summaryTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  cardTitle: { color: '#163D52', fontSize: 17, fontWeight: '600', marginTop: 5 },
-  fractionRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 27 },
-  drunk: { color: '#176C8C', fontSize: 52, lineHeight: 60, fontWeight: '700', letterSpacing: -2 },
-  slash: { color: '#7BB3C7', fontSize: 36, marginHorizontal: 9, fontWeight: '300' },
-  goal: { color: '#54859A', fontSize: 34, fontWeight: '500', letterSpacing: -1 },
-  unit: { color: '#6E9AAA', fontSize: 15, marginLeft: 7, fontWeight: '600' },
-  caption: { color: '#6795A6', fontSize: 12, marginTop: 2, marginBottom: 22 },
-  captionDot: { color: '#A0C8D5' },
-  progressTrack: { height: 10, borderRadius: 8, backgroundColor: '#C5E7F1', overflow: 'hidden', borderWidth: 1, borderColor: '#A9D6E3' },
-  progressFill: { height: '100%', borderRadius: 8, backgroundColor: '#45A9C9' },
-  progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 11 },
-  progressPercent: { color: '#327E98', fontSize: 12, fontWeight: '700' },
-  remaining: { color: '#6B96A6', fontSize: 12 },
-  bleControlCard: { minHeight: 76, marginTop: 14, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
-  bleControlCopy: { flex: 1 },
-  bleControlTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
-  bleControlMessage: { color: '#6E909D', fontSize: 10, marginTop: 4, lineHeight: 15 },
-  bleControlActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  bleConnectButton: { minWidth: 76, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 11, backgroundColor: '#3188A8' },
-  bleDisconnectButton: { backgroundColor: '#527582' },
-  bleButtonDisabled: { opacity: 0.65 },
-  bleConnectButtonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
-  tareButton: { minWidth: 50, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, borderRadius: 11, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#A9CFDA' },
-  tareButtonText: { color: '#327E98', fontSize: 11, fontWeight: '700' },
-  reminderCard: { minHeight: 76, marginTop: 16, paddingHorizontal: 17, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
-  reminderCopy: { flex: 1, paddingRight: 12 },
-  reminderTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
-  reminderDescription: { color: '#6E909D', fontSize: 11, marginTop: 4, lineHeight: 16 },
-  devPanel: { marginTop: 28, borderRadius: 18, backgroundColor: '#EAF1F4', overflow: 'hidden', borderWidth: 1, borderColor: '#C2D1D7' },
-  devPanelHeader: { minHeight: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
-  devBadge: { color: '#FFFFFF', backgroundColor: '#718D99', fontSize: 9, fontWeight: '800', letterSpacing: 0.8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6 },
-  devPanelTitle: { color: '#506E7A', fontSize: 12, fontWeight: '700', marginLeft: 9, flex: 1 },
-  devChevron: { color: '#718D99', fontSize: 19, fontWeight: '500', paddingHorizontal: 5 },
-  devPanelContent: { paddingHorizontal: 14, paddingBottom: 13 },
-  devRow: { minHeight: 49, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#DDE8EC' },
-  devLabel: { color: '#607E89', fontSize: 11, fontWeight: '600', flex: 1 },
-  devValueControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  devStepButton: { width: 29, height: 29, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#C1D3D9' },
-  devStepText: { color: '#397F97', fontSize: 17, lineHeight: 20, fontWeight: '600' },
-  devValue: { minWidth: 70, textAlign: 'center', color: '#365D6D', fontSize: 11, fontWeight: '700' },
-  devBluetoothRow: { minHeight: 49, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: '#DDE8EC' },
-  devToggle: { minWidth: 104, alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 10, backgroundColor: '#DCE4E7', borderWidth: 1, borderColor: '#B5C6CC' },
-  devToggleOn: { backgroundColor: '#CFEBD9', borderColor: '#A5D2B4' },
-  devToggleText: { color: '#56727C', fontSize: 10, fontWeight: '700' },
+  safeArea: { flex: 1 },
+  content: { paddingHorizontal: Space.xl, paddingTop: Space.lg, paddingBottom: 38, maxWidth: 560, width: '100%', alignSelf: 'center' },
+  summaryCard: { padding: Space.xl, overflow: 'hidden' },
+  summaryTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Space.md },
+  summaryCopy: { flex: 1 },
+  eyebrow: { ...Type.eyebrow, color: Palette.inkFaint },
+  fractionRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: Space.sm, flexWrap: 'wrap' },
+  drunk: { ...Type.display, color: Palette.waterDeep },
+  goal: { ...Type.body, color: Palette.inkMuted, marginLeft: Space.sm },
+  progressTrack: { height: 10, marginTop: Space.xl, borderRadius: Radius.small, backgroundColor: Palette.waterSoft, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: Radius.small, backgroundColor: Palette.water },
+  progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: Space.md },
+  progressPercent: { ...Type.caption, color: Palette.accent, fontWeight: '700' },
+  remaining: { ...Type.caption, color: Palette.inkMuted },
+  lastDrink: { ...Type.caption, color: Palette.inkFaint, marginTop: Space.sm },
+  devPanel: { marginTop: Space.xxl, overflow: 'hidden' },
+  devPanelHeader: { minHeight: 52, flexDirection: 'row', alignItems: 'center', paddingHorizontal: Space.lg },
+  devBadge: { ...Type.caption, color: Palette.onAccent, backgroundColor: Palette.accentMuted, fontSize: 9, fontWeight: '800', letterSpacing: 0.8, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 6, overflow: 'hidden' },
+  devPanelTitle: { ...Type.caption, color: Palette.inkSoft, fontWeight: '700', marginLeft: Space.sm, flex: 1 },
+  devChevron: { ...Type.subheading, color: Palette.inkMuted, paddingHorizontal: Space.xs },
+  devPanelContent: { paddingHorizontal: Space.lg, paddingBottom: Space.md },
+  devRow: { minHeight: 49, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Space.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Palette.border },
+  devLabel: { ...Type.caption, color: Palette.inkMuted, fontWeight: '600', flex: 1 },
+  devValue: { ...Type.caption, color: Palette.inkSoft, fontWeight: '700', textAlign: 'right', flexShrink: 1 },
+  devToggle: { minWidth: 104, alignItems: 'center', paddingHorizontal: Space.sm, paddingVertical: 7, borderRadius: Radius.small, backgroundColor: Palette.canvas, borderWidth: StyleSheet.hairlineWidth, borderColor: Palette.border },
+  devToggleOn: { backgroundColor: '#CFEBD9' },
+  devToggleText: { ...Type.caption, color: Palette.inkSoft, fontWeight: '700' },
 });
