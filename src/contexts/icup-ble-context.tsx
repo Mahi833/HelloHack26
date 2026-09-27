@@ -1,6 +1,7 @@
 import type { BleManager, Subscription } from '@sfourdrinier/react-native-ble-plx';
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
+import { useHydrationDevState } from '@/contexts/hydration-dev-state';
 
 export const ICUP_SERVICE_UUID = '7a1e0001-5c2b-4e3a-9f6d-2b8c0a4d1e01';
 export const ICUP_WEIGHT_UUID = '7a1e0002-5c2b-4e3a-9f6d-2b8c0a4d1e01';
@@ -48,6 +49,11 @@ type BrowserBluetooth = {
   requestDevice: (options: { filters: { services: string[] }[]; optionalServices: string[] }) => Promise<BrowserBluetoothDevice>;
 };
 
+type ScaleSample = { grams: number; at: number };
+const SETTLE_WINDOW_MS = 1800;
+const SETTLE_RANGE_GRAMS = 5;
+const MIN_INTAKE_CHANGE_GRAMS = 3;
+
 const IcupBleContext = createContext<IcupBleState | null>(null);
 
 function decodeBase64Ascii(value: string) {
@@ -86,6 +92,7 @@ async function requestBluetoothPermissions() {
 }
 
 export function IcupBleProvider({ children }: { children: ReactNode }) {
+  const { setWaterDrank, setDailyGoal } = useHydrationDevState();
   const managerRef = useRef<BleManager | null>(null);
   const deviceIdRef = useRef<string | null>(null);
   const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -94,11 +101,57 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
   const disconnectSubscriptionRef = useRef<Subscription | null>(null);
   const browserDeviceRef = useRef<BrowserBluetoothDevice | null>(null);
   const browserTareCharacteristicRef = useRef<BrowserGattCharacteristic | null>(null);
+  const scaleSamplesRef = useRef<ScaleSample[]>([]);
+  const scaleSettledRef = useRef(false);
+  const lastSettledWeightRef = useRef<number | null>(null);
+  const tareIgnoreUntilRef = useRef(0);
   const [isConnected, setIsConnected] = useState(false);
   const [isWorking, setIsWorking] = useState(false);
   const [latestWeightGrams, setLatestWeightGrams] = useState<number | null>(null);
   const [batteryPercentage, setBatteryPercentage] = useState<number | null>(null);
   const [message, setMessage] = useState('Connect to SipBase to read the live scale.');
+
+  const handleWeightReading = useCallback((grams: number) => {
+    setLatestWeightGrams(grams);
+    const now = Date.now();
+    if (now < tareIgnoreUntilRef.current) return;
+
+    const samples = scaleSamplesRef.current;
+    samples.push({ grams, at: now });
+    while (samples.length && now - samples[0].at > SETTLE_WINDOW_MS) samples.shift();
+    if (samples.length < 5 || samples[samples.length - 1].at - samples[0].at < SETTLE_WINDOW_MS - 300) return;
+
+    const values = samples.map((sample) => sample.grams);
+    const range = Math.max(...values) - Math.min(...values);
+    if (range > SETTLE_RANGE_GRAMS) {
+      scaleSettledRef.current = false;
+      return;
+    }
+    if (scaleSettledRef.current) return;
+
+    const settledWeight = values.reduce((total, value) => total + value, 0) / values.length;
+    const previousWeight = lastSettledWeightRef.current;
+    scaleSettledRef.current = true;
+    lastSettledWeightRef.current = settledWeight;
+    if (previousWeight !== null) {
+      const decreaseGrams = previousWeight - settledWeight;
+      if (decreaseGrams >= MIN_INTAKE_CHANGE_GRAMS) {
+        // For water, 1 gram is approximately 1 ml.
+        const intakeMilliliters = Math.round(decreaseGrams);
+        setWaterDrank((current) => current + intakeMilliliters);
+      }
+    }
+  }, [setWaterDrank]);
+
+  const beginNewDay = useCallback(() => {
+    setWaterDrank(0);
+    setDailyGoal(2000);
+    scaleSamplesRef.current = [];
+    scaleSettledRef.current = false;
+    lastSettledWeightRef.current = null;
+    // Let the HX711 apply its new tare offset before using samples as the new baseline.
+    tareIgnoreUntilRef.current = Date.now() + SETTLE_WINDOW_MS;
+  }, [setDailyGoal, setWaterDrank]);
 
   const clearSubscriptions = useCallback(() => {
     valueSubscriptionRef.current?.remove();
@@ -159,7 +212,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
             textValue += String.fromCharCode(value.getUint8(index));
           }
           const grams = Number.parseFloat(textValue);
-          if (Number.isFinite(grams)) setLatestWeightGrams(grams);
+          if (Number.isFinite(grams)) handleWeightReading(grams);
         });
         try {
           const batteryService = await server.getPrimaryService(BATTERY_SERVICE_UUID);
@@ -183,6 +236,9 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
           browserTareCharacteristicRef.current = null;
           setIsConnected(false);
           setBatteryPercentage(null);
+          scaleSamplesRef.current = [];
+          scaleSettledRef.current = false;
+          lastSettledWeightRef.current = null;
           setIsWorking(false);
           setMessage('SipBase disconnected.');
         });
@@ -243,7 +299,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
                 }
                 if (!characteristic?.value) return;
                 const grams = Number.parseFloat(decodeBase64Ascii(characteristic.value));
-                if (Number.isFinite(grams)) setLatestWeightGrams(grams);
+                if (Number.isFinite(grams)) handleWeightReading(grams);
               },
             );
             try {
@@ -276,6 +332,9 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
               deviceIdRef.current = null;
               setIsConnected(false);
               setBatteryPercentage(null);
+              scaleSamplesRef.current = [];
+              scaleSettledRef.current = false;
+              lastSettledWeightRef.current = null;
               setIsWorking(false);
               setMessage('SipBase disconnected.');
             });
@@ -303,7 +362,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
       setIsWorking(false);
       setMessage(connectionError instanceof Error ? connectionError.message : 'Could not start Bluetooth scan.');
     }
-  }, [clearSubscriptions, isConnected, isWorking]);
+  }, [clearSubscriptions, handleWeightReading, isConnected, isWorking]);
 
   const disconnect = useCallback(async () => {
     if (Platform.OS === 'web') {
@@ -312,6 +371,9 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
       browserTareCharacteristicRef.current = null;
       setIsConnected(false);
       setBatteryPercentage(null);
+      scaleSamplesRef.current = [];
+      scaleSettledRef.current = false;
+      lastSettledWeightRef.current = null;
       setIsWorking(false);
       setMessage('Disconnected from SipBase.');
       return;
@@ -327,6 +389,9 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
     if (deviceId) await manager.cancelDeviceConnection(deviceId).catch(() => undefined);
     setIsConnected(false);
     setBatteryPercentage(null);
+    scaleSamplesRef.current = [];
+    scaleSettledRef.current = false;
+    lastSettledWeightRef.current = null;
     setIsWorking(false);
     setMessage('Disconnected from SipBase.');
   }, [clearSubscriptions]);
@@ -337,7 +402,8 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
       if (!characteristic) return;
       try {
         await characteristic.writeValue(new Uint8Array([116]));
-        setMessage('Tare command sent. The live reading should settle near 0 g.');
+        beginNewDay();
+        setMessage('New day started. Progress reset to 0 / 2,000 ml.');
       } catch (tareError) {
         setMessage(tareError instanceof Error ? tareError.message : 'Could not tare the scale.');
       }
@@ -353,11 +419,12 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
         ICUP_TARE_UUID,
         'dA==', // Base64 for the ASCII character "t".
       );
-      setMessage('Tare command sent. The live reading should settle near 0 g.');
+      beginNewDay();
+      setMessage('New day started. Progress reset to 0 / 2,000 ml.');
     } catch (tareError) {
       setMessage(tareError instanceof Error ? tareError.message : 'Could not tare the scale.');
     }
-  }, [isConnected]);
+  }, [beginNewDay, isConnected]);
 
   return (
     <IcupBleContext.Provider value={{ isConnected, isWorking, latestWeightGrams, batteryPercentage, message, connect, disconnect, tare }}>
