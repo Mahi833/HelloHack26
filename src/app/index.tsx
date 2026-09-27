@@ -3,12 +3,14 @@ import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, 
 import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
+import { WaterOrb } from '@/components/water-orb';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
 import { createSimulatedWeightSource, useIcup, useIcupSips } from '@/ble/use-icup';
 import { useIcupBle } from '@/contexts/icup-ble-context';
 import type { WorkoutSummary } from '@/health/healthkit';
 import { useHealthReminders } from '@/health/use-health-reminders';
 import { useLogDrink } from '@/hooks/use-log-drink';
+import { useWaterTilt } from '@/motion/use-water-tilt';
 
 const GOAL_STEP_ML = 250;
 const MIN_GOAL_ML = 250;
@@ -50,6 +52,7 @@ export default function HomeScreen() {
   const cupError = simulatedCup ? simulated.error : liveSipError;
 
   const progress = dailyGoalMl > 0 ? Math.min(todayMl / dailyGoalMl, 1) : 0;
+  const tiltDeg = useWaterTilt(ready);
   const remaining = Math.max(dailyGoalMl - todayMl, 0);
 
   useEffect(() => {
@@ -138,6 +141,7 @@ export default function HomeScreen() {
             <View>
               <Text style={styles.cardTitle}>TODAY&apos;S PROGRESS</Text>
             </View>
+            <WaterOrb progress={progress} tiltDeg={tiltDeg} />
           </View>
 
           <View style={styles.fractionRow}>

@@ -1,0 +1,26 @@
+{
+  "name": "icup-motion",
+  "version": "1.0.0",
+  "description": "CoreMotion gravity stream for the iCup hydration orb",
+  "main": "src/index.ts",
+  "private": true,
+  "files": [
+    "src",
+    "ios",
+    "icup-motion.podspec"
+  ],
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "codegenConfig": {
+    "name": "IcupMotionSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "ios": {
+      "modulesProvider": {
+        "IcupMotion": "IcupMotion"
+      }
+    }
+  }
+}

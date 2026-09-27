@@ -123,24 +123,59 @@ There is no partial win available at the end: `expo` and `expo-modules-core`
 only leave after all seven consumers do, so stopping halfway means carrying both
 stacks.
 
-## Open decision: the gyroscope slosh
+## The gyroscope slosh — CoreMotion module, DONE
 
-The slosh animation needs a motion sensor. `react-native-sensors` was chosen but
-is unusable: last published November 2022, peer range `react-native >=0.39`, no
-`codegenConfig`, and RN 0.86 is bridgeless only.
+`react-native-sensors` was chosen first but is unusable: last published November
+2022, peer range `react-native >=0.39`, no `codegenConfig`, and RN 0.86 is
+bridgeless only. The replacement is a native CoreMotion module. No Expo, no
+third-party dependency.
 
-Decided: a native CoreMotion module. No Expo, no third-party dependency.
+Built as a local autolinked package at `modules/icup-motion/`, referenced from
+the app as `"icup-motion": "file:./modules/icup-motion"`. A local package rather
+than files added to the Xcode target, so `expo prebuild` cannot wipe it.
 
-It must be a New Architecture native module, since RN 0.86 is bridgeless only,
-and it needs to push a stream of samples rather than answer a single call. That
-means an event-emitting Turbo Module: a TypeScript spec, `codegenConfig` in
-`package.json`, and a Swift implementation wrapping
-`CMMotionManager.startDeviceMotionUpdates`, reading the gravity vector so the
-orb tracks down without integrating raw gyroscope rates.
+Two corrections to the original plan:
 
-Sequencing: this lands after step 1 has been through a green native build.
-Stacking an unverified new native module on an unverified pod set would make a
-failure impossible to attribute.
+Objective-C++, not Swift. CoreMotion is an Objective-C framework, so a `.mm`
+file reaches it with no bridging header and no Swift/C++ interop — precisely the
+class of problem that cost hours with `expo-modules-jsi`.
+
+`TurboModuleRegistry.get`, not `getEnforcing`. `getEnforcing` throws at import
+time when the module is absent, which would break the web target. `get` returns
+null and the wrappers in `src/index.ts` no-op.
+
+Codegen contract, read from the generated header rather than assumed:
+
+    @protocol NativeIcupMotionSpec <RCTBridgeModule, RCTTurboModule>
+    - (NSNumber *)isAvailable;
+    - (void)start:(double)intervalMs;
+    - (void)stop;
+    @end
+    @interface NativeIcupMotionSpecBase : NSObject
+    - (void)emitOnGravity:(NSDictionary *)value;
+    @end
+
+`IcupMotion` subclasses `NativeIcupMotionSpecBase`, conforms to the protocol,
+and returns `NativeIcupMotionSpecJSI` from `getTurboModule:`. Events are emitted
+from the CoreMotion `NSOperationQueue`, which is safe because the generated
+callback routes through `jsInvoker_->invokeAsync`.
+
+Verified: `POD_EXIT=0`, codegen processed `IcupMotionSpec`, `BUILD_EXIT=0`,
+`** BUILD SUCCEEDED **`, 0 errors, `IcupMotion.o` and
+`IcupMotionSpec-generated.o` both compiled and linked.
+
+### The alternative found afterwards
+
+Reanimated 4.5.1, already installed, ships
+`useAnimatedSensor(SensorType.GRAVITY)`, which wraps the same `CMMotionManager`
+gravity vector and writes it into a shared value on the UI thread. It is
+strictly better for the orb: no per-sample JS hop, no native code to maintain.
+It was missed when the CoreMotion option was framed.
+
+The orb reads gravity only through `src/motion/use-water-tilt.ts`, so switching
+is a change to that one file. The native module stays because it is built and
+green, and because it is the only way to read gravity from JS if anything other
+than an animation ever needs it.
 
 ## Orb design, as chosen
 
@@ -151,3 +186,27 @@ out. Surface angle comes from gravity through a damped spring per axis in
 Reanimated 4.5.1, already installed, so it overshoots and settles rather than
 tracking rigidly. Straight surface edge, not a curved wave, which is the
 accepted cost of adding no graphics dependency.
+
+### How the tilt is built, as implemented
+
+`src/components/water-orb.tsx` is 96 px, clipped to a circle, and sits on the
+right of the summary card's title row. Nothing else in the card moved.
+
+Rotating a water line inside a circle needs a rotation origin on the line, and
+React Native rotates about a view's centre. So the water is a zero-height pivot
+positioned at the water line and stretched to three times the orb's width, with
+the filled rectangle as its child. The pivot's centre therefore sits exactly
+where the water line crosses the orb's vertical axis, and rotating the pivot
+rotates the surface about that point. The rectangle is three orb-heights deep
+and one and a half orb-widths to each side, which keeps the circle covered at
+the 32 degree tilt limit.
+
+`src/motion/use-water-tilt.ts` springs the gravity x and y components
+separately, then derives the angle from the settled pair:
+`atan2(gx, -gy)`, negated because a world-level line appears rotated the
+opposite way in a screen that has itself rotated. Springing the components
+rather than the angle keeps the overshoot physical and avoids the wrap
+discontinuity at plus or minus 180 degrees. `damping: 7` against
+`stiffness: 95` overshoots once and settles. Samples arrive at 30 Hz and each
+one restarts the spring toward the new target, so the surface lags during motion
+and settles after it.
