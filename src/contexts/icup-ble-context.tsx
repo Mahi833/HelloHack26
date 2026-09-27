@@ -7,6 +7,7 @@ import type { ScaleSample } from '@/ble/weight-payload';
 
 export const ICUP_SERVICE_UUID = '7a1e0001-5c2b-4e3a-9f6d-2b8c0a4d1e01';
 export const ICUP_WEIGHT_UUID = '7a1e0002-5c2b-4e3a-9f6d-2b8c0a4d1e01';
+const ICUP_TARE_COMMAND = 'dA==';
 export const ICUP_TARE_UUID = '7a1e0003-5c2b-4e3a-9f6d-2b8c0a4d1e01';
 export const BATTERY_SERVICE_UUID = '0000180f-0000-1000-8000-00805f9b34fb';
 export const BATTERY_LEVEL_UUID = '00002a19-0000-1000-8000-00805f9b34fb';
@@ -123,7 +124,6 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
-    // Load the native module only on iOS/Android so the web build never evaluates it.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { BleManager: NativeBleManager } = require('@sfourdrinier/react-native-ble-plx') as {
       BleManager: new () => BleManager;
@@ -153,7 +153,6 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
       setBatteryPercentage(null);
       setMessage('Choose SipBase in the browser device picker…');
       try {
-        // requestDevice must be called from the Connect button gesture in the browser.
         const device = await browserBluetooth.requestDevice({
           filters: [{ services: [ICUP_SERVICE_UUID] }],
           optionalServices: [BATTERY_SERVICE_UUID],
@@ -185,7 +184,6 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
               if (value) setBatteryPercentage(Math.min(100, value.getUint8(0)));
             });
           } catch {
-            // Keep the one-time reading when the battery characteristic does not support notifications.
           }
         } catch {
           setBatteryPercentage(null);
@@ -277,10 +275,8 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
                   },
                 );
               } catch {
-                // Keep the one-time reading when the battery characteristic does not support notifications.
               }
             } catch {
-              // The scale can still connect when its firmware does not expose the standard battery service.
               setBatteryPercentage(null);
             }
             disconnectSubscriptionRef.current = manager.onDeviceDisconnected(connectedDevice.id, () => {
@@ -363,7 +359,7 @@ export function IcupBleProvider({ children }: { children: ReactNode }) {
         deviceId,
         ICUP_SERVICE_UUID,
         ICUP_TARE_UUID,
-        'dA==', // Base64 for the ASCII character "t".
+        ICUP_TARE_COMMAND,
       );
       setMessage('Tare command sent. The live reading should settle near 0 g.');
     } catch (tareError) {
