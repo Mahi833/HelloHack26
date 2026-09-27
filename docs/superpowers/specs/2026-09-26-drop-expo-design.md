@@ -24,19 +24,26 @@ build, because the pod set changed.
 Ordered so each step lands on a working app. `expo-router` is last because
 everything renders inside it.
 
-### 1. expo-symbols (1 import, low risk)
+### 1. expo-symbols — DONE, no replacement needed
 
-`src/components/app-tabs.tsx` uses it for SF Symbols on tab icons. Replace with
-an image asset or a maintained SF Symbols wrapper. Smallest possible first step,
-and it proves the pod regeneration loop works before anything important depends
-on it.
+Its only consumer was `src/components/ui/collapsible.tsx`, which nothing
+imports. Traced from all four routes under `src/app/`: `_layout`, `index`,
+`history` and `quick-add` reach neither it nor anything that reaches it. Both
+the file and the package were deleted, so no chevron replacement was written.
 
-### 2. expo-web-browser (1 import)
+This orphaned `src/components/themed-text.tsx` and
+`src/components/themed-view.tsx`, whose only importer was `collapsible`. They
+are left in place because removing them is unrelated to this migration.
 
-Used by `src/components/external-link.tsx` to open links in an in-app browser.
-React Native's own `Linking.openURL` opens the system browser instead. That is a
-behaviour change, not a like-for-like swap: the user leaves the app. Needs a
-decision, or `react-native-inappbrowser-reborn` to preserve the current feel.
+### 2. expo-web-browser — also dead code
+
+Its only consumer is `src/components/external-link.tsx`, which nothing imports
+either. This step is a deletion, not a replacement, so `Linking.openURL` and
+`react-native-inappbrowser-reborn` are both moot and the earlier concern about
+the user leaving the app does not apply.
+
+Also unreferenced, found while tracing: `src/components/hint-row.tsx` and
+`src/components/web-badge.tsx`. Neither involves Expo.
 
 ### 3. expo-image (3 imports)
 
@@ -122,13 +129,25 @@ The slosh animation needs a motion sensor. `react-native-sensors` was chosen but
 is unusable: last published November 2022, peer range `react-native >=0.39`, no
 `codegenConfig`, and RN 0.86 is bridgeless only.
 
-Three options:
+Decided: a native CoreMotion module. No Expo, no third-party dependency.
 
-1. `expo-sensors`. Works today, and contradicts this document.
-2. A small native CoreMotion module. No Expo, no third-party dependency, and
-   `react-native-nitro-modules` is already a pinned dependency that can expose
-   it. Maybe 60 lines of Swift plus codegen wiring.
-3. Defer the slosh until the migration settles.
+It must be a New Architecture native module, since RN 0.86 is bridgeless only,
+and it needs to push a stream of samples rather than answer a single call. That
+means an event-emitting Turbo Module: a TypeScript spec, `codegenConfig` in
+`package.json`, and a Swift implementation wrapping
+`CMMotionManager.startDeviceMotionUpdates`, reading the gravity vector so the
+orb tracks down without integrating raw gyroscope rates.
 
-Option 2 is the recommendation, because it is the only one that satisfies both
-the feature and this document.
+Sequencing: this lands after step 1 has been through a green native build.
+Stacking an unverified new native module on an unverified pod set would make a
+failure impossible to attribute.
+
+## Orb design, as chosen
+
+A new circular vessel alongside the existing bar, not replacing it. Water level
+set by `todayMl / dailyGoalMl`. Surface is a rectangle clipped to the circle via
+`overflow: hidden`, so no drawing library is needed and `react-native-svg` stays
+out. Surface angle comes from gravity through a damped spring per axis in
+Reanimated 4.5.1, already installed, so it overshoots and settles rather than
+tracking rigidly. Straight surface edge, not a curved wave, which is the
+accepted cost of adding no graphics dependency.
