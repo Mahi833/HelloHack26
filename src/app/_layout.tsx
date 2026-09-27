@@ -5,6 +5,7 @@ import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
+import { IcupBleProvider } from '@/contexts/icup-ble-context';
 import { HydrationStoreProvider } from '@/store/hydration-store';
 
 SplashScreen.preventAutoHideAsync();
@@ -24,7 +25,9 @@ export default function TabLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <AnimatedSplashOverlay />
       <HydrationStoreProvider>
-        <AppTabs />
+        <IcupBleProvider>
+          <AppTabs />
+        </IcupBleProvider>
       </HydrationStoreProvider>
     </ThemeProvider>
   );

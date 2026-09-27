@@ -4,7 +4,8 @@ import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
-import { createBleWeightSource, createSimulatedWeightSource, useIcup } from '@/ble/use-icup';
+import { createSimulatedWeightSource, useIcup, useIcupSips } from '@/ble/use-icup';
+import { useIcupBle } from '@/contexts/icup-ble-context';
 import type { WorkoutSummary } from '@/health/healthkit';
 import { useHealthReminders } from '@/health/use-health-reminders';
 import { useLogDrink } from '@/hooks/use-log-drink';
@@ -33,12 +34,20 @@ export default function HomeScreen() {
   const now = useClock();
   const minutesSinceDrink = lastDrinkAt === null ? null : Math.max(0, Math.floor((now - lastDrinkAt) / 60000));
 
-  const weightSource = useMemo(
-    () => (simulatedCup ? createSimulatedWeightSource() : createBleWeightSource()),
-    [simulatedCup],
-  );
-  const icup = useIcup({ addDrink: logDrink, source: weightSource });
+  const icupBle = useIcupBle();
+  const simulatedSource = useMemo(() => createSimulatedWeightSource(), []);
+  const simulated = useIcup({ addDrink: logDrink, source: simulatedSource, enabled: simulatedCup });
+  const liveSipError = useIcupSips({
+    addDrink: logDrink,
+    sample: icupBle.latestSample,
+    connected: icupBle.isConnected && !simulatedCup,
+  });
   const health = useHealthReminders({ lastDrinkAt, todayMl, addDrink: logDrink });
+
+  const cupConnected = simulatedCup ? simulated.connected : icupBle.isConnected;
+  const cupWeightG = simulatedCup ? simulated.weightG : icupBle.latestWeightGrams;
+  const shownBattery = simulatedCup ? simulated.batteryPct : icupBle.batteryPercentage;
+  const cupError = simulatedCup ? simulated.error : liveSipError;
 
   const progress = dailyGoalMl > 0 ? Math.min(todayMl / dailyGoalMl, 1) : 0;
   const remaining = Math.max(dailyGoalMl - todayMl, 0);
@@ -152,9 +161,9 @@ export default function HomeScreen() {
 
         <View style={styles.connectionRow}>
           <View
-            style={[styles.bluetoothBubble, icup.connected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
+            style={[styles.bluetoothBubble, cupConnected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
             accessibilityRole="text"
-            accessibilityLabel={`iCup Bluetooth is ${icup.connected ? 'connected' : 'not connected'}`}>
+            accessibilityLabel={`iCup Bluetooth is ${cupConnected ? 'connected' : 'not connected'}`}>
             <Image
               source={require('@/assets/images/icup-bluetooth-badge.png')}
               resizeMode="contain"
@@ -164,21 +173,56 @@ export default function HomeScreen() {
             <View style={styles.connectionCopy}>
               <Text style={styles.connectionTitle}>Bluetooth</Text>
               <View style={styles.connectionStateLine}>
-                <View style={[styles.statusDot, icup.connected ? styles.connectedDot : styles.disconnectedDot]} />
-                <Text style={[styles.connectionStatusText, icup.connected && styles.connectedStatusText]} numberOfLines={1}>
-                  {icup.connected
+                <View style={[styles.statusDot, cupConnected ? styles.connectedDot : styles.disconnectedDot]} />
+                <Text style={[styles.connectionStatusText, cupConnected && styles.connectedStatusText]} numberOfLines={1}>
+                  {cupConnected
                     ? simulatedCup ? 'Simulated cup' : 'Connected'
-                    : icup.error ? 'Bluetooth problem' : 'Not connected'}
+                    : cupError ? 'Bluetooth problem' : 'Not connected'}
                 </Text>
               </View>
             </View>
           </View>
 
-          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={icup.weightG === null ? 'Cup weight unknown' : `Cup weight ${Math.round(icup.weightG)} grams`}>
-            <View>
-              <Text style={styles.batteryLabel}>In the cup</Text>
-              <Text style={styles.batteryValue}>{icup.weightG === null ? '--' : `${Math.round(icup.weightG)} g`}</Text>
+          <View style={styles.batteryBubble} accessibilityRole="text" accessibilityLabel={`iCup battery ${shownBattery === null ? 'unavailable' : `${shownBattery} percent`}`}>
+            <View style={styles.batteryIcon}>
+              <View style={styles.batteryCap} />
+              <View style={styles.batteryOutline}>
+                <View style={[styles.batteryFill, { width: `${shownBattery ?? 0}%` }, shownBattery !== null && shownBattery <= 20 && styles.batteryFillLow]} />
+              </View>
             </View>
+            <View>
+              <Text style={styles.batteryLabel}>Battery</Text>
+              <Text style={styles.batteryValue}>{shownBattery === null ? '--' : `${shownBattery}%`}</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.bleControlCard}>
+          <View style={styles.bleControlCopy}>
+            <Text style={styles.bleControlTitle}>
+              {cupWeightG === null ? 'iCup live scale' : `${cupWeightG.toFixed(1)} g`}
+            </Text>
+            <Text style={styles.bleControlMessage}>
+              {simulatedCup ? 'Simulated cup is driving sips. Turn it off in developer controls.' : icupBle.message}
+            </Text>
+          </View>
+          <View style={styles.bleControlActions}>
+            {icupBle.isConnected && !simulatedCup && (
+              <Pressable accessibilityRole="button" onPress={() => void icupBle.tare()} style={styles.tareButton}>
+                <Text style={styles.tareButtonText}>Tare</Text>
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              disabled={icupBle.isWorking || simulatedCup}
+              onPress={() => void (icupBle.isConnected ? icupBle.disconnect() : icupBle.connect())}
+              style={[styles.bleConnectButton, icupBle.isConnected && styles.bleDisconnectButton, (icupBle.isWorking || simulatedCup) && styles.bleButtonDisabled]}>
+              {icupBle.isWorking ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.bleConnectButtonText}>{icupBle.isConnected ? 'Disconnect' : 'Connect'}</Text>
+              )}
+            </Pressable>
           </View>
         </View>
 
@@ -239,7 +283,7 @@ export default function HomeScreen() {
                 />
                 <View style={styles.devRow}>
                   <Text style={styles.devLabel}>Live weight</Text>
-                  <Text style={styles.devValue}>{icup.weightG === null ? 'no reading' : `${icup.weightG.toFixed(1)} g`}</Text>
+                  <Text style={styles.devValue}>{cupWeightG === null ? 'no reading' : `${cupWeightG.toFixed(1)} g`}</Text>
                 </View>
                 <View style={styles.devRow}>
                   <Text style={styles.devLabel}>Apple Health</Text>
@@ -261,10 +305,10 @@ export default function HomeScreen() {
                   <Text style={styles.devLabel}>Last health nudge</Text>
                   <Text style={styles.devValue}>{health.lastNudge === null ? 'none yet' : health.lastNudge.kind}</Text>
                 </View>
-                {icup.error !== null && (
+                {cupError !== null && (
                   <View style={styles.devRow}>
                     <Text style={styles.devLabel}>Bluetooth error</Text>
-                    <Text style={styles.devValue}>{icup.error}</Text>
+                    <Text style={styles.devValue}>{cupError}</Text>
                   </View>
                 )}
               </View>
@@ -324,6 +368,17 @@ const styles = StyleSheet.create({
   progressPercent: { color: '#327E98', fontSize: 12, fontWeight: '700' },
   remaining: { color: '#6B96A6', fontSize: 12 },
   connectionRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10, marginTop: 18 },
+  bleControlCard: { minHeight: 76, marginTop: 14, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
+  bleControlCopy: { flex: 1 },
+  bleControlTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
+  bleControlMessage: { color: '#6E909D', fontSize: 10, marginTop: 4, lineHeight: 15 },
+  bleControlActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  bleConnectButton: { minWidth: 76, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 11, backgroundColor: '#3188A8' },
+  bleDisconnectButton: { backgroundColor: '#527582' },
+  bleButtonDisabled: { opacity: 0.65 },
+  bleConnectButtonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
+  tareButton: { minWidth: 50, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, borderRadius: 11, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#A9CFDA' },
+  tareButtonText: { color: '#327E98', fontSize: 11, fontWeight: '700' },
   reminderCard: { minHeight: 76, marginTop: 16, paddingHorizontal: 17, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
   reminderCopy: { flex: 1, paddingRight: 12 },
   reminderTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
@@ -341,6 +396,11 @@ const styles = StyleSheet.create({
   connectionStatusText: { color: '#8299A2', fontSize: 10, fontWeight: '600' },
   connectedStatusText: { color: '#278452' },
   batteryBubble: { width: 112, minHeight: 68, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 19, backgroundColor: '#E5F4F8', borderWidth: 1, borderColor: '#C5DFE7' },
+  batteryIcon: { width: 22, height: 13, flexDirection: 'row', alignItems: 'center' },
+  batteryOutline: { flex: 1, height: 12, padding: 2, justifyContent: 'center', borderRadius: 3, borderWidth: 1.5, borderColor: '#6D9EAD' },
+  batteryCap: { width: 3, height: 6, borderTopRightRadius: 2, borderBottomRightRadius: 2, backgroundColor: '#6D9EAD' },
+  batteryFill: { height: '100%', borderRadius: 1, backgroundColor: '#42A6C2' },
+  batteryFillLow: { backgroundColor: '#D89B47' },
   batteryLabel: { color: '#7F9CA7', fontSize: 9, fontWeight: '600' },
   batteryValue: { color: '#326277', fontSize: 13, fontWeight: '700', marginTop: 2 },
   devPanel: { marginTop: 28, borderRadius: 18, backgroundColor: '#EAF1F4', overflow: 'hidden', borderWidth: 1, borderColor: '#C2D1D7' },

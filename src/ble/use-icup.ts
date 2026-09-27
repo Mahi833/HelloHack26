@@ -1,16 +1,9 @@
-import { BleManager } from '@sfourdrinier/react-native-ble-plx';
-import type { Device, Subscription } from '@sfourdrinier/react-native-ble-plx';
-import { Buffer } from 'buffer';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { createSipDetector, FILTER_WINDOW_SAMPLES } from '@/ble/sip-detector';
+import type { ScaleSample } from '@/ble/weight-payload';
 import type { DrinkEvent, DrinkSource } from '@/store/types';
 
-export const ICUP_DEVICE_NAME = 'iCup';
-export const ICUP_SERVICE_UUID = 'a82f0001-4ef3-4b7a-9c2d-5bd3a1e0c101';
-export const ICUP_WEIGHT_CHARACTERISTIC_UUID = 'a82f0002-4ef3-4b7a-9c2d-5bd3a1e0c101';
-
-const RECONNECT_DELAY_MS = 1500;
 const SIMULATED_SAMPLE_INTERVAL_MS = 250;
 const SIMULATED_BATTERY_PCT = 87;
 const SIMULATED_JITTER_G = 2;
@@ -36,8 +29,14 @@ export type WeightSource = (sink: WeightSink) => () => void;
 
 export type UseIcupOptions = {
   addDrink: AddDrink;
-  source?: WeightSource;
+  source: WeightSource;
   enabled?: boolean;
+};
+
+export type UseIcupSipsOptions = {
+  addDrink: AddDrink;
+  sample: ScaleSample | null;
+  connected: boolean;
 };
 
 const describeError = (cause: unknown): string => {
@@ -48,182 +47,6 @@ const describeError = (cause: unknown): string => {
     return cause;
   }
   return 'iCup hit an unknown Bluetooth error';
-};
-
-export const parseWeightGrams = (base64Value: string | null): number | null => {
-  if (base64Value === null || base64Value.length === 0) {
-    return null;
-  }
-  try {
-    const payload: unknown = JSON.parse(Buffer.from(base64Value, 'base64').toString('utf8'));
-    if (typeof payload !== 'object' || payload === null) {
-      return null;
-    }
-    const grams = (payload as { weight_g?: unknown }).weight_g;
-    return typeof grams === 'number' && Number.isFinite(grams) ? grams : null;
-  } catch {
-    return null;
-  }
-};
-
-export const createBleWeightSource = (): WeightSource => (sink) => {
-  const manager = new BleManager();
-  let stopped = false;
-  let scanning = false;
-  let device: Device | null = null;
-  let weightMonitor: Subscription | null = null;
-  let disconnectWatcher: Subscription | null = null;
-  let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const ignore = () => undefined;
-
-  const stopScan = () => {
-    if (!scanning) {
-      return;
-    }
-    scanning = false;
-    manager.stopDeviceScan().catch(ignore);
-  };
-
-  const releaseDevice = () => {
-    weightMonitor?.remove();
-    weightMonitor = null;
-    disconnectWatcher?.remove();
-    disconnectWatcher = null;
-    const identifier = device?.id;
-    device = null;
-    if (identifier !== undefined) {
-      manager.cancelDeviceConnection(identifier).catch(ignore);
-    }
-  };
-
-  const scheduleScan = () => {
-    if (stopped || retryTimer !== null || scanning) {
-      return;
-    }
-    retryTimer = setTimeout(() => {
-      retryTimer = null;
-      startScan();
-    }, RECONNECT_DELAY_MS);
-  };
-
-  const attach = async (found: Device) => {
-    try {
-      const connected = await found.connect();
-      const ready = await connected.discoverAllServicesAndCharacteristics();
-      if (stopped) {
-        manager.cancelDeviceConnection(ready.id).catch(ignore);
-        return;
-      }
-      device = ready;
-      disconnectWatcher = ready.onDisconnected(() => {
-        if (stopped) {
-          return;
-        }
-        sink.connected(false);
-        sink.failed('iCup connection lost');
-        releaseDevice();
-        scheduleScan();
-      });
-      weightMonitor = manager.monitorCharacteristicForDevice(
-        ready.id,
-        ICUP_SERVICE_UUID,
-        ICUP_WEIGHT_CHARACTERISTIC_UUID,
-        (monitorError, characteristic) => {
-          if (stopped) {
-            return;
-          }
-          if (monitorError !== null) {
-            sink.failed(describeError(monitorError));
-            return;
-          }
-          const grams = parseWeightGrams(characteristic?.value ?? null);
-          if (grams !== null) {
-            sink.weight(grams);
-          }
-        },
-      );
-      sink.failed(null);
-      sink.connected(true);
-    } catch (cause) {
-      if (stopped) {
-        return;
-      }
-      sink.connected(false);
-      sink.failed(describeError(cause));
-      releaseDevice();
-      scheduleScan();
-    }
-  };
-
-  const startScan = () => {
-    if (stopped || scanning || device !== null) {
-      return;
-    }
-    scanning = true;
-    manager
-      .startDeviceScan([ICUP_SERVICE_UUID], null, (scanError, scanned) => {
-        if (stopped) {
-          return;
-        }
-        if (scanError !== null) {
-          stopScan();
-          sink.failed(describeError(scanError));
-          scheduleScan();
-          return;
-        }
-        if (scanned === null) {
-          return;
-        }
-        stopScan();
-        void attach(scanned);
-      })
-      .catch((cause: unknown) => {
-        scanning = false;
-        if (stopped) {
-          return;
-        }
-        sink.failed(describeError(cause));
-        scheduleScan();
-      });
-  };
-
-  const stateWatcher = manager.onStateChange((state) => {
-    if (stopped) {
-      return;
-    }
-    if (state === 'PoweredOn') {
-      sink.failed(null);
-      startScan();
-      return;
-    }
-    stopScan();
-    sink.connected(false);
-    if (state === 'PoweredOff') {
-      sink.failed('Turn Bluetooth on to reach the iCup');
-      releaseDevice();
-      return;
-    }
-    if (state === 'Unauthorized') {
-      sink.failed('Bluetooth permission was denied for this app');
-      return;
-    }
-    if (state === 'Unsupported') {
-      sink.failed('This device does not support Bluetooth Low Energy');
-    }
-  }, true);
-
-  return () => {
-    stopped = true;
-    if (retryTimer !== null) {
-      clearTimeout(retryTimer);
-      retryTimer = null;
-    }
-    stateWatcher.remove();
-    stopScan();
-    releaseDevice();
-    manager.destroy().catch(ignore);
-  };
 };
 
 export type SimulatedCupOptions = {
@@ -285,8 +108,6 @@ export const useIcup = ({ addDrink, source, enabled = true }: UseIcupOptions): I
     addDrinkRef.current = addDrink;
   }, [addDrink]);
 
-  const resolvedSource = useMemo(() => source ?? createBleWeightSource(), [source]);
-
   useEffect(() => {
     if (!enabled) {
       return;
@@ -328,21 +149,76 @@ export const useIcup = ({ addDrink, source, enabled = true }: UseIcupOptions): I
       },
     };
 
-    const stop = resolvedSource(sink);
+    const stop = source(sink);
 
     return () => {
       live = false;
       stop();
       detector.reset();
     };
-  }, [enabled, resolvedSource]);
+  }, [enabled, source]);
 
-  return { connected, weightG, batteryPct, error };
+  return enabled
+    ? { connected, weightG, batteryPct, error }
+    : { connected: false, weightG: null, batteryPct: null, error: null };
+};
+
+export const useIcupSips = ({ addDrink, sample, connected }: UseIcupSipsOptions): string | null => {
+  const [error, setError] = useState<string | null>(null);
+
+  const addDrinkRef = useRef(addDrink);
+  const detectorRef = useRef<ReturnType<typeof createSipDetector> | null>(null);
+
+  useEffect(() => {
+    addDrinkRef.current = addDrink;
+  }, [addDrink]);
+
+  useEffect(() => {
+    if (!connected) {
+      detectorRef.current?.reset();
+      detectorRef.current = null;
+      return;
+    }
+    detectorRef.current = createSipDetector();
+    return () => {
+      detectorRef.current?.reset();
+      detectorRef.current = null;
+    };
+  }, [connected]);
+
+  useEffect(() => {
+    const detector = detectorRef.current;
+    if (detector === null || sample === null) {
+      return;
+    }
+    const ml = detector.push(sample.grams);
+    if (ml === null) {
+      return;
+    }
+    let live = true;
+    addDrinkRef.current(ml, 'cup')
+      .then(() => {
+        if (live) {
+          setError(null);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (live) {
+          setError(describeError(cause));
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [sample]);
+
+  return connected ? error : null;
 };
 
 export const useSimulatedIcup = (
   addDrink: AddDrink,
   options: SimulatedCupOptions = {},
+  enabled = true,
 ): IcupStatus => {
   const source = useMemo(
     () =>
@@ -361,5 +237,5 @@ export const useSimulatedIcup = (
       options.samplesPerStep,
     ],
   );
-  return useIcup({ addDrink, source });
+  return useIcup({ addDrink, source, enabled });
 };
