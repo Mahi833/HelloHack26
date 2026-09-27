@@ -3,6 +3,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Switch,
 import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
+import { QuickAddRow } from '@/components/quick-add-row';
 import { WaterOrb } from '@/components/water-orb';
 import { useClock, useHydrationStore } from '@/store/hydration-store';
 import { createSimulatedWeightSource, useIcup, useIcupSips } from '@/ble/use-icup';
@@ -129,6 +130,12 @@ export default function HomeScreen() {
     );
   };
 
+  const logServing = (amountMl: number) => {
+    logDrink(amountMl, 'manual').catch((error: unknown) =>
+      console.warn('Could not save that drink', error),
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -160,6 +167,8 @@ export default function HomeScreen() {
             </Text>
           </View>
         </View>
+
+        <QuickAddRow onAdd={logServing} />
 
         <View style={styles.bleControlCard}>
           <View style={styles.bleControlCopy}>

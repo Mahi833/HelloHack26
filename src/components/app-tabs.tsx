@@ -12,14 +12,6 @@ export default function AppTabs() {
       backgroundColor={colors.background}
       indicatorColor={colors.backgroundElement}
       labelStyle={{ selected: { color: colors.text } }}>
-      <NativeTabs.Trigger name="quick-add">
-        <NativeTabs.Trigger.Label>Quick Add</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          sf={{ default: 'plus.circle', selected: 'plus.circle.fill' }}
-          md={{ default: 'add_circle', selected: 'add_circle' }}
-        />
-      </NativeTabs.Trigger>
-
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>Home</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon

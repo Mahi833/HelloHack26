@@ -19,9 +19,6 @@ export default function AppTabs() {
       <TabSlot style={{ height: '100%' }} />
       <TabList asChild>
         <CustomTabList>
-          <TabTrigger name="quick-add" href="/quick-add" asChild>
-            <TabButton>Quick Add</TabButton>
-          </TabTrigger>
           <TabTrigger name="index" href="/" asChild>
             <TabButton>Home</TabButton>
           </TabTrigger>
