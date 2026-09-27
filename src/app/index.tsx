@@ -4,12 +4,14 @@ import * as Notifications from 'expo-notifications';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LastDrinkPlaceholder } from '@/components/last-drink-placeholder';
 import { useHydrationDevState } from '@/contexts/hydration-dev-state';
+import { useIcupBle } from '@/contexts/icup-ble-context';
 
 export default function HomeScreen() {
   const [devPanelOpen, setDevPanelOpen] = useState(false);
   const [sipRemindersEnabled, setSipRemindersEnabled] = useState(false);
   const [reminderBusy, setReminderBusy] = useState(false);
   const [reminderMessage, setReminderMessage] = useState('Get a gentle reminder every 2 minutes.');
+  const icupBle = useIcupBle();
   const {
     waterDrank,
     setWaterDrank,
@@ -24,6 +26,7 @@ export default function HomeScreen() {
   } = useHydrationDevState();
   const progress = dailyGoal > 0 ? Math.min(waterDrank / dailyGoal, 1) : 0;
   const remaining = Math.max(dailyGoal - waterDrank, 0);
+  const bluetoothConnected = icupBle.isConnected || (__DEV__ && isICupConnected);
 
   useEffect(() => {
     let mounted = true;
@@ -122,9 +125,9 @@ export default function HomeScreen() {
 
         <View style={styles.connectionRow}>
           <View
-            style={[styles.bluetoothBubble, isICupConnected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
+            style={[styles.bluetoothBubble, bluetoothConnected ? styles.bluetoothBubbleConnected : styles.bluetoothBubbleDisconnected]}
             accessibilityRole="text"
-            accessibilityLabel={`iCup Bluetooth is ${isICupConnected ? 'connected' : 'not connected'}`}>
+            accessibilityLabel={`iCup Bluetooth is ${bluetoothConnected ? 'connected' : 'not connected'}`}>
             <Image
               source={require('@/assets/images/icup-bluetooth-badge.png')}
               resizeMode="contain"
@@ -134,9 +137,9 @@ export default function HomeScreen() {
             <View style={styles.connectionCopy}>
               <Text style={styles.connectionTitle}>Bluetooth</Text>
               <View style={styles.connectionStateLine}>
-                <View style={[styles.statusDot, isICupConnected ? styles.connectedDot : styles.disconnectedDot]} />
-                <Text style={[styles.connectionStatusText, isICupConnected && styles.connectedStatusText]}>
-                  {isICupConnected ? 'Connected' : 'Not connected'}
+                <View style={[styles.statusDot, bluetoothConnected ? styles.connectedDot : styles.disconnectedDot]} />
+                <Text style={[styles.connectionStatusText, bluetoothConnected && styles.connectedStatusText]}>
+                  {bluetoothConnected ? 'Connected' : 'Not connected'}
                 </Text>
               </View>
             </View>
@@ -153,6 +156,33 @@ export default function HomeScreen() {
               <Text style={styles.batteryLabel}>Battery</Text>
               <Text style={styles.batteryValue}>{icupBattery}%</Text>
             </View>
+          </View>
+        </View>
+
+        <View style={styles.bleControlCard}>
+          <View style={styles.bleControlCopy}>
+            <Text style={styles.bleControlTitle}>
+              {icupBle.latestWeightGrams === null ? 'iCup live scale' : `${icupBle.latestWeightGrams.toFixed(1)} g`}
+            </Text>
+            <Text style={styles.bleControlMessage}>{icupBle.message}</Text>
+          </View>
+          <View style={styles.bleControlActions}>
+            {icupBle.isConnected && (
+              <Pressable accessibilityRole="button" onPress={() => void icupBle.tare()} style={styles.tareButton}>
+                <Text style={styles.tareButtonText}>Tare</Text>
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              disabled={icupBle.isWorking}
+              onPress={() => void (icupBle.isConnected ? icupBle.disconnect() : icupBle.connect())}
+              style={[styles.bleConnectButton, icupBle.isConnected && styles.bleDisconnectButton, icupBle.isWorking && styles.bleButtonDisabled]}>
+              {icupBle.isWorking ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.bleConnectButtonText}>{icupBle.isConnected ? 'Disconnect' : 'Connect'}</Text>
+              )}
+            </Pressable>
           </View>
         </View>
 
@@ -301,6 +331,17 @@ const styles = StyleSheet.create({
   progressPercent: { color: '#327E98', fontSize: 12, fontWeight: '700' },
   remaining: { color: '#6B96A6', fontSize: 12 },
   connectionRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10, marginTop: 18 },
+  bleControlCard: { minHeight: 76, marginTop: 14, paddingHorizontal: 16, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
+  bleControlCopy: { flex: 1 },
+  bleControlTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },
+  bleControlMessage: { color: '#6E909D', fontSize: 10, marginTop: 4, lineHeight: 15 },
+  bleControlActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  bleConnectButton: { minWidth: 76, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 11, backgroundColor: '#3188A8' },
+  bleDisconnectButton: { backgroundColor: '#527582' },
+  bleButtonDisabled: { opacity: 0.65 },
+  bleConnectButtonText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
+  tareButton: { minWidth: 50, minHeight: 36, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, borderRadius: 11, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: '#A9CFDA' },
+  tareButtonText: { color: '#327E98', fontSize: 11, fontWeight: '700' },
   reminderCard: { minHeight: 76, marginTop: 16, paddingHorizontal: 17, paddingVertical: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 19, backgroundColor: '#E7F5F9', borderWidth: 1, borderColor: '#BCDDE6' },
   reminderCopy: { flex: 1, paddingRight: 12 },
   reminderTitle: { color: '#245267', fontSize: 14, fontWeight: '700' },

@@ -27,6 +27,12 @@
       "expo-router",
       "expo-notifications",
       [
+        "@sfourdrinier/react-native-ble-plx",
+        {
+          "bluetoothAlwaysPermission": "HelloHack26 uses Bluetooth to connect to your iCup water sensor."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
