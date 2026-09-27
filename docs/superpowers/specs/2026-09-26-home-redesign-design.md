@@ -30,6 +30,7 @@ asymmetric rather than simply small.
 | Sip feedback | Subtle buzz, only while the app is open |
 | Glass | Local native module, not `expo-glass-effect` |
 | Glass extent | Cards and controls, not the orb |
+| Daily goal | Editable, behind the header gear |
 
 ## What the references gave us
 
@@ -112,6 +113,17 @@ the firmware notifies continuously while connected, so a minute of silence is
 unambiguous rather than a slow sample rate. Silent sync failure is the
 documented way apps in this category lose the user's trust in their own data.
 
+### Settings sheet
+
+The gear opens a sheet whose only control today is the daily goal. Release
+builds currently have no way to change it: the sole goal control lives in the
+`__DEV__` panel in `src/app/index.tsx`, so a shipped build is locked to
+3,000 ml. That is a gap Alex found on the phone, not a new feature.
+
+Same stepper as the `+` sheet, in 100 ml increments, floored at 500 ml and
+capped at 6,000 ml. The value persists through the existing `settings`
+key/value table in `src/store/db.ts` rather than a new store.
+
 ### Hero orb
 
 About 260 pt, centred, filled to `todayMl / dailyGoalMl`, using the slosh
@@ -140,8 +152,8 @@ One line: `Next reminder 4:30pm` and the toggle.
 
 ### Tabs
 
-Three become two: Home and History. Quick Add's serving cards become the preset
-row.
+Three become two: Home and History, confirmed by Alex after seeing the build on
+the phone. Quick Add's serving cards become the preset row.
 
 ## Glass
 
